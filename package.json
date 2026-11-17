@@ -1,0 +1,15 @@
+{
+  "name": "stock-analyzer",
+  "version": "1.0.0",
+  "description": "Beginner-friendly stock market analyser: live charts, signals, entry/exit levels, top picks and news.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js --open",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "MIT"
+}

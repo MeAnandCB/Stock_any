@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StockSense — Beginner Stock Analyser</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+    // Apply saved theme before paint to avoid a flash.
+    try { const t = JSON.parse(localStorage.getItem('ss.theme')); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/dashboard" aria-label="StockSense home">
+      <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 7h5v5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>StockSense</span>
+    </a>
+
+    <div class="search" role="combobox" aria-haspopup="listbox" aria-expanded="false" id="searchBox">
+      <input id="searchInput" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Search a stock (e.g. Reliance, TCS, Apple)…" aria-label="Search stocks" aria-controls="searchList" />
+      <ul id="searchList" class="search-list" role="listbox" hidden></ul>
+    </div>
+
+    <div class="top-actions">
+      <div class="seg" role="group" aria-label="Market">
+        <button type="button" data-market="IN">India</button>
+        <button type="button" data-market="US">US</button>
+      </div>
+      <button type="button" class="icon-btn" id="themeBtn" title="Toggle dark / light mode" aria-label="Toggle theme">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Sections">
+    <a href="#/dashboard" data-tab="dashboard">Dashboard</a>
+    <a href="#/analyze" data-tab="analyze">Analyse</a>
+    <a href="#/picks" data-tab="picks">Top Picks</a>
+    <a href="#/watchlist" data-tab="watchlist">Watchlist</a>
+    <a href="#/news" data-tab="news">News</a>
+    <a href="#/academy" data-tab="academy">Academy</a>
+    <a href="#/learn" data-tab="learn">Glossary</a>
+  </nav>
+
+  <div id="disclaimer" class="disclaimer" hidden>
+    <strong>Educational tool, not financial advice.</strong>
+    Signals are generated automatically from price charts and headlines and can be wrong. Never invest money you cannot afford to lose, always use a stop-loss, and consider talking to a registered advisor.
+    <button type="button" id="disclaimerOk">Got it</button>
+  </div>
+
+  <main id="view" tabindex="-1"></main>
+
+  <footer class="footer">
+    Data: Yahoo Finance (may be delayed ~15 min). For learning purposes only — not investment advice.
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
