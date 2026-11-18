@@ -13,7 +13,7 @@ Needs Node.js 18+ (no `npm install` required — zero dependencies).
 
 Then open http://localhost:3000. If port 3000 is busy it picks the next free one.
 
-`npm test` runs the unit tests.
+`npm test` runs the unit tests (on Node 22+ use `node --test test/*.test.js` if `npm test` complains about the `test/` folder).
 
 ## Features
 
@@ -23,6 +23,7 @@ Then open http://localhost:3000. If port 3000 is busy it picks the next free one
 | Analyse | **Live candlestick chart** (1 min / 5 min / 15 min / 1 hour / Daily) that updates every 5–10 s while the market is open, with a LIVE badge, pause button and live header price. Chart overlays: 20/50/200-bar averages, Bollinger Bands, support/resistance, trade-plan lines, RSI and MACD. Signal score (−100…+100), entry zone, stop-loss, 2 targets, risk:reward, plain-English explanation of every indicator, position-size calculator, stock news. |
 | Top Picks | Scans 30 large caps per market. Ranks by short-term setup score or long-term trend strength. |
 | Watchlist | Saved in your browser. |
+| Paper Trade | Practise with **virtual money** (₹10,00,000 / $100,000) at live prices, in a broker-style layout: Buy/Sell order window (Delivery or Intraday, Market / Limit / SL-M, quantity, margin and approximate charges), **Holdings, Positions, Orders** and a **P&L report**. Stop-loss and target orders trigger automatically while the app is open, and every closed trade gets a plain-English review (R-multiple, charges, did you use a stop-loss). A step-by-step *Learn* guide walks you through your first trade. Stored only in your browser; separate India and US accounts. Buy/Sell buttons also appear on every stock's Analyse page. |
 | News | Market or topic news with positive/negative headline tagging. |
 | Academy | A 22-class course from beginner to advanced in **English and Malayalam (മലയാളം)**: how the market works, opening an account, how to buy and sell, reading candles, trends, support/resistance, indicators, chart analysis routine, entry, stop-loss, exits, risk management, psychology, fundamentals and strategies. Diagrams, a quiz per class, progress tracking and "try it" links into live charts. |
 | Glossary | Beginner rules and glossary. |
@@ -52,7 +53,9 @@ lib/analysis.js      scoring, levels, trade plan, summaries
 lib/news.js          Google News RSS parser
 lib/sentiment.js     headline sentiment
 lib/universe.js      indices and stock lists per market
+lib/paper.js         paper-trading engine (orders, fills, margin, charges, P&L) — shared with the browser
 public/              UI (index.html, app.js, styles.css)
+public/paper.js      Paper Trade screens and order window
 public/academy.js    course engine (curriculum, diagrams, quizzes, progress)
 public/academy/      lesson text: lessons-en-*.js and lessons-ml-*.js (same ids in both)
 test/                unit tests (node --test)

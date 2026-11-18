@@ -1,6 +1,7 @@
 // StockSense front-end. Plain JS, no build step.
 import { sma, rsi, macd, bollinger } from '/lib/indicators.js';
 import { viewAcademy } from './academy.js';
+import { initPaper, viewPaper, cleanupPaper, openOrder } from './paper.js';
 
 // ---------- utilities ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -153,6 +154,7 @@ const POPULAR = {
 const marketLabel = () => (state.market === 'IN' ? 'Indian' : 'US');
 
 function cleanupView() {
+  cleanupPaper();
   stopLive();
   live.handle = null;
   destroyCharts();
@@ -169,7 +171,7 @@ function newController() {
 }
 
 // ---------- router ----------
-const views = { dashboard: viewDashboard, analyze: viewAnalyze, picks: viewPicks, watchlist: viewWatchlist, news: viewNews, academy: viewAcademy, learn: viewLearn };
+const views = { dashboard: viewDashboard, analyze: viewAnalyze, picks: viewPicks, watchlist: viewWatchlist, paper: viewPaper, news: viewNews, academy: viewAcademy, learn: viewLearn };
 
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/');
@@ -433,7 +435,10 @@ function renderAnalyze(data, alive) {
       <div style="text-align:right">
         <div class="price num" id="hdrPrice" data-v="${isNum(q.price) ? q.price : ''}">${fmtPrice(q.price, q.currency, q.symbol)}</div>
         <div id="hdrChange" class="num ${cls(q.changePct)}" style="font-weight:700">${fmtNum(q.change)} (${fmtPct(q.changePct)}) today</div>
-        <button class="star ${inWatch ? 'on' : ''}" id="starBtn" style="margin-top:6px">${inWatch ? '★ In watchlist' : '☆ Add to watchlist'}</button>
+        <div class="stock-actions">
+          <button class="star ${inWatch ? 'on' : ''}" id="starBtn">${inWatch ? '★ In watchlist' : '☆ Add to watchlist'}</button>
+          ${q.symbol.startsWith('^') ? '' : `<button class="btn buy" id="ptBuy" title="Practise with virtual money — no real order is placed">Paper Buy</button><button class="btn sell" id="ptSell" title="Practise with virtual money — no real order is placed">Paper Sell</button>`}
+        </div>
       </div>
     </div>
     ${q.stale ? '<div class="disclaimer" style="width:100%;margin:12px 0 0">The data provider is not responding — showing the last saved data.</div>' : ''}`;
@@ -470,6 +475,8 @@ function renderAnalyze(data, alive) {
 }
 
 function bindStar(q) {
+  $('#ptBuy')?.addEventListener('click', () => openOrder({ symbol: q.symbol, name: q.name, side: 'BUY' }));
+  $('#ptSell')?.addEventListener('click', () => openOrder({ symbol: q.symbol, name: q.name, side: 'SELL' }));
   $('#starBtn')?.addEventListener('click', (e) => {
     const on = state.watch.includes(q.symbol);
     state.watch = on ? state.watch.filter((s) => s !== q.symbol) : [...state.watch, q.symbol].slice(-40);
@@ -1328,6 +1335,7 @@ function init() {
   });
 
   initSearch();
+  initPaper({ api, esc, enc, isNum, cls, toast, store, state, view, newController, errorBox, loading, goAnalyze, verdictClass, popular: POPULAR });
   window.addEventListener('hashchange', route);
   route();
 }

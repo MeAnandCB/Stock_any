@@ -37,7 +37,10 @@ const CANDLE_INTERVALS = {
 
 // Files outside /public that the browser is allowed to load (the indicator
 // maths is shared between server and browser).
-const SHARED_FILES = { '/lib/indicators.js': path.join(__dirname, 'lib', 'indicators.js') };
+const SHARED_FILES = {
+  '/lib/indicators.js': path.join(__dirname, 'lib', 'indicators.js'),
+  '/lib/paper.js': path.join(__dirname, 'lib', 'paper.js'),
+};
 
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
@@ -137,6 +140,36 @@ function withSentiment(news) {
   return news.map((n) => ({ ...n, sentiment: scoreHeadline(n.title) }));
 }
 
+// Fresh price for paper trading: 1-minute bars (short cache) so fills and P&L
+// follow the market, falling back to the daily chart if intraday data is missing.
+async function liveQuote(symbol) {
+  let chart;
+  try {
+    chart = await getChart(symbol, '1d', '1m', { ttlMs: 5000, step: 60, tag: 'quote' });
+  } catch (e) {
+    if (e.status === 404 || e.status === 400) throw e;
+    chart = await getChart(symbol);
+  }
+  let prevClose = null;
+  try {
+    prevClose = (await getChart(symbol)).prevClose;
+  } catch {
+    /* day change is optional */
+  }
+  const ok = typeof prevClose === 'number' && Number.isFinite(prevClose) && prevClose > 0;
+  return {
+    symbol: chart.symbol,
+    name: chart.name,
+    currency: chart.currency,
+    price: chart.price,
+    prevClose: ok ? prevClose : null,
+    changePct: ok ? ((chart.price - prevClose) / prevClose) * 100 : null,
+    marketState: chart.marketState,
+    marketTime: chart.marketTime,
+    stale: Boolean(chart.stale),
+  };
+}
+
 // ---------- API ----------
 const routes = {
   async '/api/health'() {
@@ -215,6 +248,22 @@ const routes = {
       },
       candles: chart.candles,
     };
+  },
+
+  // Light-weight live prices for the paper-trading screens (up to 25 symbols).
+  async '/api/quotes'(q) {
+    const raw = String(q.get('symbols') || '').split(',').map(cleanSymbol).filter(Boolean);
+    const symbols = [...new Set(raw)].slice(0, 25);
+    if (!symbols.length) return { quotes: {}, failed: [] };
+    const results = await mapLimit(symbols, 5, (s) => liveQuote(s));
+    const quotes = {};
+    const failed = [];
+    results.forEach((r, i) => {
+      if (r.ok) quotes[symbols[i]] = r.value;
+      else failed.push({ symbol: symbols[i], error: r.error?.message || 'Failed' });
+    });
+    if (!Object.keys(quotes).length) throw new AppError(failed[0]?.error || 'Could not load prices.', 503);
+    return { quotes, failed, time: Date.now() };
   },
 
   async '/api/summary'(q) {
