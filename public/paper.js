@@ -7,6 +7,7 @@ import * as E from '/lib/paper.js';
 let C = null; // helpers injected by app.js (avoids a circular import)
 let shown = null; // the Paper Trading page currently on screen
 let modal = null; // the order window currently open
+let dialog = null; // the reset-confirmation dialog currently open
 let bgTimer = null;
 const quoteCache = {}; // symbol -> last quote seen
 
@@ -59,6 +60,7 @@ export function initPaper(ctx) {
 export function cleanupPaper() {
   shown = null;
   closeOrder();
+  closeDialog();
 }
 
 // ---------- prices & order processing ----------
@@ -231,20 +233,66 @@ function bindPage(a, sub) {
   });
 }
 
+// Reset uses an in-page dialog: browser confirm()/prompt() pop-ups are blocked or silently
+// ignored in embedded and sandboxed browsers, which made the button look dead.
 function resetAccount(a) {
-  if (!confirm('Reset this paper account? All holdings, orders and trade history in this market will be erased.')) return;
+  closeDialog();
   const def = E.START_FUNDS[a.market];
-  const raw = prompt(`Starting virtual funds (${a.currency}):`, String(def));
-  if (raw == null) return;
-  const v = Number(String(raw).replace(/[, ]/g, ''));
-  if (!Number.isFinite(v) || v < 1000) {
-    C.toast('Please enter an amount of at least 1,000.');
-    return;
-  }
-  saveAcct(E.newAccount(a.market, v));
-  shown.quotes = {};
-  C.toast('Paper account reset.');
-  paint();
+  const has = [
+    a.holdings.length && `${a.holdings.length} holding${a.holdings.length === 1 ? '' : 's'}`,
+    a.positions.length && `${a.positions.length} open position${a.positions.length === 1 ? '' : 's'}`,
+    `${a.orders.length} order${a.orders.length === 1 ? '' : 's'}`,
+    `${a.trades.length} closed trade${a.trades.length === 1 ? '' : 's'}`,
+  ].filter(Boolean).join(', ');
+  const market = a.market === 'IN' ? 'India' : 'US';
+  const root = document.createElement('div');
+  root.className = 'pt-backdrop';
+  root.innerHTML = `<div class="pt-modal is-sell" role="alertdialog" aria-modal="true" aria-labelledby="ptrTitle" aria-describedby="ptrText" tabindex="-1">
+    <div class="pt-m-head"><h2 id="ptrTitle">Reset ${market} paper account?</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+    <div class="pt-m-body">
+      <p id="ptrText" style="margin:0">This permanently erases your ${market} paper account: <b>${C.esc(has)}</b>. You start again with fresh virtual money. Your other market's account is not affected.</p>
+      <label class="pt-f">Starting virtual funds (${C.esc(a.currency)})<input id="ptrFunds" type="text" inputmode="decimal" autocomplete="off" value="${def}"></label>
+      <div class="pt-err" id="ptrErr" role="alert" hidden></div>
+    </div>
+    <div class="pt-m-foot"><button class="btn" data-close>Cancel</button><button class="btn sell pt-submit" id="ptrOk">Reset account</button></div>
+  </div>`;
+  document.body.appendChild(root);
+  const input = $('#ptrFunds', root);
+  const err = $('#ptrErr', root);
+  const onKey = (e) => { if (e.key === 'Escape') closeDialog(); };
+  document.addEventListener('keydown', onKey);
+  dialog = { root, onKey, opener: document.activeElement };
+  root.addEventListener('mousedown', (e) => { if (e.target === root) closeDialog(); });
+  $$('[data-close]', root).forEach((b) => b.addEventListener('click', closeDialog));
+  const confirmReset = () => {
+    const v = Number(String(input.value).replace(/[, ₹$]/g, ''));
+    if (!Number.isFinite(v) || v < 1000) {
+      err.hidden = false;
+      err.textContent = 'Enter a starting amount of at least 1,000 (numbers only).';
+      input.focus();
+      return;
+    }
+    saveAcct(E.newAccount(a.market, v));
+    closeDialog();
+    if (shown) shown.quotes = {};
+    C.toast(`${market} paper account reset with ${money(v, a.currency)}.`);
+    // Land on the fresh account's guide; repaint directly if we are already there.
+    if (location.hash === '#/paper' || location.hash === '#/paper/') paint();
+    else location.hash = '#/paper';
+  };
+  $('#ptrOk', root).addEventListener('click', confirmReset);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); confirmReset(); } });
+  input.focus();
+  input.select();
+}
+
+function closeDialog() {
+  if (!dialog) return;
+  const d = dialog;
+  dialog = null;
+  document.removeEventListener('keydown', d.onKey);
+  d.root.remove();
+  try { d.opener?.focus?.(); } catch { /* element may be gone */ }
 }
 
 // ---------- tables ----------
