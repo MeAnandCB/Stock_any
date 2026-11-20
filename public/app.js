@@ -2,6 +2,7 @@
 import { sma, rsi, macd, bollinger } from '/lib/indicators.js';
 import { viewAcademy } from './academy.js';
 import { initPaper, viewPaper, cleanupPaper, openOrder } from './paper.js';
+import { initIntraday, viewIntraday, loadIntradayCard } from './intraday.js';
 
 // ---------- utilities ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -171,7 +172,7 @@ function newController() {
 }
 
 // ---------- router ----------
-const views = { dashboard: viewDashboard, analyze: viewAnalyze, picks: viewPicks, watchlist: viewWatchlist, paper: viewPaper, news: viewNews, academy: viewAcademy, learn: viewLearn };
+const views = { dashboard: viewDashboard, analyze: viewAnalyze, picks: viewPicks, intraday: viewIntraday, watchlist: viewWatchlist, paper: viewPaper, news: viewNews, academy: viewAcademy, learn: viewLearn };
 
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/');
@@ -457,6 +458,7 @@ function renderAnalyze(data, alive) {
       ${verdictCard(a)}
       ${planCard(a, q)}
     </div>
+    <div class="card section" id="aIntraday">${skel(120)}</div>
     <div class="section">${chartCardHtml()}</div>
     <div class="grid cols-2 section">
       <div class="card"><h3>What the chart is telling you</h3>${a.factors.map(factorRow).join('')}</div>
@@ -472,6 +474,7 @@ function renderAnalyze(data, alive) {
   bindChartToolbar(data, alive);
   mountChart(data, alive);
   loadNewsInto($('#aNews'), q.newsQuery || q.name, alive, newController().signal, 8, q.newsKeywords || []);
+  loadIntradayCard(q, alive, newController().signal);
 }
 
 function bindStar(q) {
@@ -1025,7 +1028,7 @@ async function viewPicks(_, alive) {
           <button data-m="long" class="${state.picksMode === 'long' ? 'active' : ''}">🌱 Long-term trend (months+)</button>
         </div>
         <div class="filters" id="pFilter">
-          ${[['all', 'All'], ['buy', 'Buy signals'], ['hold', 'Hold'], ['avoid', 'Avoid']].map(([k, l]) => `<button data-f="${k}" class="${state.picksFilter === k ? 'active' : ''}">${l}</button>`).join('')}
+          ${[['all', 'All'], ['strong', '⭐ Strong Buy'], ['buy', 'Buy signals'], ['hold', 'Hold'], ['avoid', 'Avoid']].map(([k, l]) => `<button data-f="${k}" class="${state.picksFilter === k ? 'active' : ''}">${l}</button>`).join('')}
         </div>
       </div>
       <p class="small muted" id="pExplain"></p>
@@ -1041,6 +1044,7 @@ async function viewPicks(_, alive) {
     $('#pExplain').textContent = explain;
     let items = scanCache.items.filter((i) => !i.insufficient);
     const f = state.picksFilter;
+    if (f === 'strong') items = items.filter((i) => i.verdict.key === 'strong_buy');
     if (f === 'buy') items = items.filter((i) => ['buy', 'strong_buy'].includes(i.verdict.key));
     if (f === 'hold') items = items.filter((i) => i.verdict.key === 'hold');
     if (f === 'avoid') items = items.filter((i) => ['sell', 'strong_sell'].includes(i.verdict.key));
@@ -1048,7 +1052,7 @@ async function viewPicks(_, alive) {
     items.sort((a, b) => b[key] - a[key]);
     const failed = scanCache.failed?.length ? `<p class="small muted">Could not load: ${scanCache.failed.map((x) => esc(x.symbol)).join(', ')}</p>` : '';
     if (!items.length) {
-      $('#pTable').innerHTML = `<div class="empty">No stocks match this filter right now.</div>${failed}`;
+      $('#pTable').innerHTML = `<div class="empty">${f === 'strong' ? 'No stock is rated Strong Buy right now — it needs a score of +50 or more, so it is rare. Try “Buy signals”, or open the <a href="#/intraday">Intraday</a> tab.' : 'No stocks match this filter right now.'}</div>${failed}`;
       return;
     }
     $('#pTable').innerHTML = `<div class="table-wrap"><table>
@@ -1336,6 +1340,7 @@ function init() {
 
   initSearch();
   initPaper({ api, esc, enc, isNum, cls, toast, store, state, view, newController, errorBox, loading, goAnalyze, verdictClass, popular: POPULAR });
+  initIntraday({ api, esc, enc, isNum, cls, state, view, newController, errorBox, loading, goAnalyze, verdictClass, verdictPill, fmtPrice, fmtNum, fmtPct, marketLabel });
   window.addEventListener('hashchange', route);
   route();
 }

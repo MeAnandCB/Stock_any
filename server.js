@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 
 import { getChart, search, AppError } from './lib/yahoo.js';
 import { analyze, summarize, round } from './lib/analysis.js';
+import { analyzeIntraday, buildItem, buildBoard, evaluateBest, indexBias, SCENARIOS } from './lib/intraday.js';
 import { scoreHeadline, aggregate } from './lib/sentiment.js';
 import { getNews, newsNameFor } from './lib/news.js';
 import { MARKETS } from './lib/universe.js';
@@ -34,6 +35,24 @@ const CANDLE_INTERVALS = {
   '1h': { yahoo: '60m', step: 3600, range: '3mo', ttl: 60000, liveRange: '5d', liveTtl: 8000 },
   '1d': { yahoo: '1d', step: 0, range: '2y', ttl: 3 * 60 * 1000, liveRange: '5d', liveTtl: 8000 },
 };
+
+// 5-minute bars for the intraday screens. 5 days gives enough history for the
+// moving averages, yesterday's levels and "normal volume at this time of day".
+const INTRADAY_FETCH = { ttlMs: 30000, step: 300 };
+const intradayChart = (symbol) => getChart(symbol, '5d', '5m', INTRADAY_FETCH);
+const minutesLeftIn = (chart) =>
+  chart.marketState === 'open' && chart.sessionEnd ? Math.max(0, (chart.sessionEnd - Date.now()) / 60000) : null;
+
+// How the whole market is behaving today (first index of the market). Never
+// throws: a missing index just means the "market is not falling" check is skipped.
+async function marketDirection(market) {
+  const ix = MARKETS[market].indices[0];
+  try {
+    return indexBias(await intradayChart(ix.symbol), ix.name);
+  } catch {
+    return null;
+  }
+}
 
 // Files outside /public that the browser is allowed to load (the indicator
 // maths is shared between server and browser).
@@ -280,6 +299,62 @@ const routes = {
       throw new AppError(failed[0].error || 'Could not load market data.', 503);
     }
     return { market, updated: Date.now(), total: MARKETS[market].stocks.length, items, failed };
+  },
+
+  // Intraday desk: every large cap analysed on 5-minute candles, the scenario
+  // each one is in, the "best of the best" buys and the Strong Buy lists.
+  async '/api/intraday'(q) {
+    const market = marketOf(q);
+    const symbols = MARKETS[market].stocks;
+    const [direction, fetched] = await Promise.all([
+      marketDirection(market),
+      mapLimit(symbols, 5, async (s) => {
+        const [m5, d1] = await Promise.all([intradayChart(s), getChart(s).catch(() => null)]);
+        return { m5, d1 };
+      }),
+    ]);
+    const ok = fetched.filter((r) => r.ok).map((r) => r.value);
+    if (!ok.length) throw new AppError(fetched[0]?.error?.message || 'Could not load intraday data.', 503);
+    const failed = [];
+    fetched.forEach((r, i) => {
+      if (!r.ok) failed.push({ symbol: symbols[i], error: r.error?.message || 'Failed' });
+    });
+    const marketOpen = ok.some((x) => x.m5.marketState === 'open');
+    const minutesLeft = ok.map((x) => minutesLeftIn(x.m5)).find((v) => v != null) ?? null;
+    const items = ok.map((x) => buildItem(x.m5, x.d1, { minutesLeft }));
+    const board = buildBoard(items, { marketBias: direction, marketOpen, minutesLeft });
+    const sessionDate = items.map((i) => i.intraday?.sessionDate).filter(Boolean).sort().pop() ?? null;
+    return {
+      market,
+      updated: Date.now(),
+      marketOpen,
+      minutesLeft: minutesLeft == null ? null : Math.round(minutesLeft),
+      sessionDate,
+      marketBias: direction,
+      total: symbols.length,
+      failed,
+      scenarios: SCENARIOS,
+      ...board,
+    };
+  },
+
+  // One stock's intraday view (the card on the Analyse page).
+  async '/api/intraday-stock'(q) {
+    const market = marketOf(q);
+    const symbol = requireSymbol(q.get('symbol'));
+    const chart = await intradayChart(symbol);
+    const minutesLeft = minutesLeftIn(chart);
+    const intraday = analyzeIntraday(chart, { minutesLeft });
+    let best = null;
+    if (!intraday.insufficient && !symbol.startsWith('^')) {
+      const [direction, daily] = await Promise.all([
+        marketDirection(market),
+        getChart(symbol).then((c) => buildItem(chart, c).daily).catch(() => null),
+      ]);
+      best = evaluateBest({ intraday, daily }, { marketBias: direction, marketOpen: chart.marketState === 'open', minutesLeft });
+      best.marketBias = direction;
+    }
+    return { symbol: chart.symbol, marketState: chart.marketState, stale: Boolean(chart.stale), intraday, best, scenarios: SCENARIOS };
   },
 
   async '/api/indices'(q) {

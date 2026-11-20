@@ -366,6 +366,26 @@ ul.notes li { margin: 4px 0; }
   .pt-modal { border-radius: 14px 14px 0 0; }
 }
 
+/* ---------- intraday ---------- */
+.idx-banner { padding: 12px 16px; }
+.best.top { border-left: 5px solid var(--up); }
+.best-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.best-head .price { font-size: 26px; font-weight: 800; }
+.plan-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.checks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 5px; font-size: 13px; }
+.checks li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; }
+.checks .ck { font-weight: 800; text-align: center; }
+.checks li.ok .ck { color: var(--up); }
+.checks li.no .ck { color: var(--down); }
+.miss { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.miss-row { align-items: start; }
+details.more summary { cursor: pointer; color: var(--info); font-weight: 600; padding: 8px 4px; }
+.filters button .num { opacity: .7; margin-left: 2px; }
+details.legend summary, #aIntraday details summary { cursor: pointer; }
+#aIntraday .stats div { align-items: baseline; }
+#aIntraday .stats div span:last-child { text-align: right; }
+@media (max-width: 1000px) { .plan-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
 /* ---------- states ---------- */
 .skeleton { background: linear-gradient(90deg, var(--surface-2), var(--border), var(--surface-2)); background-size: 200% 100%; animation: sk 1.3s infinite; border-radius: 8px; }
 @keyframes sk { from { background-position: 200% 0; } to { background-position: -200% 0; } }
