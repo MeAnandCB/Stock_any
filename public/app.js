@@ -1,4 +1,5 @@
 // StockSense front-end. Plain JS, no build step.
+import { startSync, initSyncUi } from './sync.js'; // must stay first: it watches localStorage so every screen syncs
 import { sma, rsi, macd, bollinger } from '/lib/indicators.js';
 import { viewAcademy } from './academy.js';
 import { initPaper, viewPaper, cleanupPaper, openOrder } from './paper.js';
@@ -92,12 +93,12 @@ function spark(values, w = 110, h = 34) {
 }
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 3000) {
   const el = $('#toast');
   el.textContent = msg;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), 3000);
+  toastTimer = setTimeout(() => (el.hidden = true), ms);
 }
 
 async function api(path, { timeout = 45000, signal } = {}) {
@@ -1339,10 +1340,13 @@ function init() {
   });
 
   initSearch();
+  initSyncUi();
   initPaper({ api, esc, enc, isNum, cls, toast, store, state, view, newController, errorBox, loading, goAnalyze, verdictClass, popular: POPULAR });
   initIntraday({ api, esc, enc, isNum, cls, state, view, newController, errorBox, loading, goAnalyze, verdictClass, verdictPill, fmtPrice, fmtNum, fmtPct, marketLabel });
   window.addEventListener('hashchange', route);
   route();
 }
 
+// Pull the cloud copy first (4 s at most, never fails the app) so the first screen already shows current data.
+await startSync();
 init();

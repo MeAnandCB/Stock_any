@@ -13,9 +13,12 @@ import { analyzeIntraday, buildItem, buildBoard, evaluateBest, indexBias, SCENAR
 import { scoreHeadline, aggregate } from './lib/sentiment.js';
 import { getNews, newsNameFor } from './lib/news.js';
 import { MARKETS } from './lib/universe.js';
-import { mapLimit, cleanSymbol } from './lib/util.js';
+import { mapLimit, cleanSymbol, readBody } from './lib/util.js';
+import { normalizeCode, sanitizeItems, SyncError, MAX_TOTAL_BYTES } from './lib/sync-core.js';
+import { syncExchange } from './lib/sync.js';
+import { createLimiter } from './lib/ratelimit.js';
 
-loadEnv(); // optional .env file (MONGODB_URI etc.); real environment variables win
+if (!process.env.NODE_TEST_CONTEXT) loadEnv(); // optional .env file (MONGODB_URI etc.); real env vars win. Skipped under `node --test` so tests can never touch your real database.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -64,6 +67,7 @@ async function marketDirection(market) {
 const SHARED_FILES = {
   '/lib/indicators.js': path.join(__dirname, 'lib', 'indicators.js'),
   '/lib/paper.js': path.join(__dirname, 'lib', 'paper.js'),
+  '/lib/sync-core.js': path.join(__dirname, 'lib', 'sync-core.js'),
 };
 
 function sendJson(res, status, obj) {
@@ -452,6 +456,57 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+// ---------- cloud sync ----------
+// POST /api/sync  { code, items?, create?, wipe? }  ->  { items, serverTime }
+// The sync code is the only credential (120 random bits; only its hash is stored), so this endpoint
+// is safe to expose on a public deployment. It is rate-limited, size-limited and needs a database.
+const syncLimiter = createLimiter({ max: 90, windowMs: 60 * 1000 }); // all requests per IP
+const syncFailLimiter = createLimiter({ max: 10, windowMs: 60 * 1000 }); // wrong / unknown codes per IP
+export function resetSyncLimits() {
+  syncLimiter.clear();
+  syncFailLimiter.clear();
+}
+const clientIp = (req) =>
+  (process.env.VERCEL ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '') || req.socket?.remoteAddress || 'unknown';
+
+async function handleSync(req, res) {
+  const ip = clientIp(req);
+  try {
+    if (!syncLimiter.hit(ip)) throw new AppError('Too many requests. Please wait a minute and try again.', 429);
+    if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) throw new AppError('Expected JSON.', 415);
+    if (!dbEnabled()) throw new AppError('This server has no database connected, so cloud sync is not available. Set MONGODB_URI and restart.', 503);
+
+    const raw = await readBody(req, MAX_TOTAL_BYTES + 128 * 1024);
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new AppError('The request could not be read.', 400);
+    }
+    const code = normalizeCode(payload?.code);
+    if (!code) {
+      if (!syncFailLimiter.hit(ip)) throw new AppError('Too many wrong codes. Please wait a minute and try again.', 429);
+      throw new AppError('That sync code is not valid — check it for typos.', 400);
+    }
+    const wipe = payload.wipe === true;
+    const items = wipe ? {} : sanitizeItems(payload.items);
+    let db;
+    try {
+      db = await getDb();
+    } catch (e) {
+      throw new AppError(`The database is not reachable right now: ${safeError(e)}`, 503);
+    }
+    await ensureIndexes(db);
+    const result = await syncExchange(db, { code, items, create: payload.create === true, wipe });
+    sendJson(res, 200, { ok: true, ...result });
+  } catch (err) {
+    const known = err instanceof AppError || err instanceof SyncError || Number.isInteger(err?.status);
+    if (err instanceof SyncError && err.status === 404) syncFailLimiter.hit(ip); // guessing codes gets throttled
+    if (!known) console.error(err);
+    sendJson(res, known ? err.status || 400 : 500, { error: known ? err.message : 'Something went wrong on the server.' });
+  }
+}
+
 export function createServer() {
   return http.createServer(async (req, res) => {
     let url;
@@ -460,6 +515,7 @@ export function createServer() {
     } catch {
       return sendJson(res, 400, { error: 'Bad request' });
     }
+    if (req.method === 'POST' && url.pathname === '/api/sync') return handleSync(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed' });
 
     if (url.pathname.startsWith('/api/')) {

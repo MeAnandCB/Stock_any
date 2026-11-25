@@ -24,7 +24,7 @@ The app works fine without a database. Connect one and it keeps a history of the
 | `picks` | Every **best-of-the-best** intraday BUY: stock, scenario, buy zone, stop-loss, targets, risk:reward, score and checks passed — **frozen as first signalled** — plus the last time it still qualified. Kept forever (about 0.5 KB each). | The first time a stock passes every check **while the market is open** |
 | `scans` | A snapshot of the whole desk: every stock's score, scenario and plan, the daily signal, market direction and the Strong Buy lists (about 14 KB each). Deleted automatically after 30 days. | Every 5 minutes while the market is open (one final snapshot per session after the close) — **only while someone has the Intraday page open or calls `/api/intraday`** |
 
-Paper-trading accounts and watchlists stay in your browser; they are not sent to the database.
+Your watchlist and paper-trading accounts live in your browser; to keep them in the cloud and use them on any device, turn on **☁️ Sync** (next section).
 
 **Set it up** — pick one database, then start the app:
 
@@ -45,6 +45,29 @@ Options in `.env`: `MONGODB_DB` (default `stocksense`), `SCAN_TTL_DAYS` (default
 - On **Vercel**: add `MONGODB_URI` (and optionally the other variables) under Project → Settings → Environment Variables, and in Atlas → Network Access allow Vercel's addresses (`0.0.0.0/0` is the usual choice because Vercel IPs change). Vercel installs the driver from `package.json` automatically.
 - `/api/history` and `/api/db-status` are read-only and never expose the connection string, but on a public deployment anyone can read the saved signal history.
 - To run the database tests: `TEST_MONGODB_URI=mongodb://127.0.0.1:27017 node --test test/*.test.js` (uses a temporary database and deletes it afterwards).
+
+## ☁️ Sync across devices (needs the database)
+
+Keeps your **watchlist, paper-trading accounts (India and US), Academy progress and risk settings** in MongoDB, so any browser or device shows the same data. Theme and chart-timeframe settings stay per device.
+
+1. Open the app on the device that has your data — **at the address you always used** (browsers keep a separate store per address: `localhost:3000`, `localhost:3100` and `127.0.0.1:3000` are all different).
+2. Click **☁️ Sync: off** in the page footer → **Create a sync code and upload this browser's data**. Save the code (a password manager is ideal).
+3. On every other device: open the app → **☁️ Sync** → paste the code → **Connect**. That device now shows the same data.
+
+From then on changes are uploaded a moment after you make them and downloaded when you open or return to the app. Details:
+
+- **Newest change wins, per item.** If you change the watchlist on two devices while offline, the later edit wins; the other items (e.g. the paper account) are unaffected. A paper-trading account is one item, so trade on one device at a time. When connecting replaces older data, the replaced copy is kept in the browser (`ss.sync.prev`).
+- **The code is the password.** It has 120 random bits and a check character (typos are caught), the server stores only a hash of it, and wrong guesses are rate-limited. Anyone with the code can read and change your synced data — it cannot be recovered if lost, but you can see it again in **☁️ Sync** while a device is connected. **Delete my cloud copy** removes it for everyone.
+- **Anywhere** means the app itself must be reachable: run it on a host such as Vercel (below), or use it on your own computer. Every deployment pointing at the same database shares the same sync codes.
+- A server accepts at most 20 sync codes (`SYNC_MAX_BUCKETS`) so a public deployment cannot fill a free database.
+- Deleting something (e.g. removing the last watchlist stock) syncs like any other edit; resetting the browser's storage does not delete the cloud copy.
+
+**Put it online (Vercel)**
+
+1. Push the project to GitHub (it already is) and import it at vercel.com → *Add New… → Project*. No build settings needed — `vercel.json` has them.
+2. Project → Settings → Environment Variables: add `MONGODB_URI` (your Atlas string). Optionally `MONGODB_DB`, `SYNC_MAX_BUCKETS`.
+3. In Atlas → Network Access, allow `0.0.0.0/0` (Vercel's addresses change).
+4. Redeploy, open the `https://…vercel.app` address, and use **☁️ Sync** there. Use the **same address** every time on that device. Data from a different address (e.g. your old `localhost:3000`) is brought across by creating the code there first, then connecting from the new address.
 
 ## Features
 
