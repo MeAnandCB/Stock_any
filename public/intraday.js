@@ -75,7 +75,7 @@ export async function viewIntraday(_, alive) {
       if (!alive()) return;
       board = data;
       if (!validFilter()) filter = 'all';
-      render();
+      render(alive);
     } catch (e) {
       if (!alive() || e.name === 'AbortError') return;
       body.innerHTML = C.errorBox(e.message, 'iRetry');
@@ -98,7 +98,7 @@ function validFilter() {
   return Boolean(board?.scenarios?.[filter.slice(2)]);
 }
 
-function render() {
+function render(alive) {
   const d = board;
   $('#iUpdated').textContent = `Updated ${new Date(d.updated).toLocaleTimeString()} · ${d.items.length}/${d.total} stocks`;
   $('#iBanner').innerHTML = bannerHtml(d);
@@ -109,8 +109,72 @@ function render() {
       <div class="section-head"><h2>🔍 Every scenario — all ${d.items.length} stocks</h2></div>
       <div class="card" id="iScn"></div>
     </section>
+    <section class="section" id="iHistory"></section>
     ${legendHtml(d)}`;
   renderScenarios();
+  loadHistory(alive);
+}
+
+// ---------- saved history (MongoDB) ----------
+let historyCache = null; // { market, html } — shown instantly while the refreshed copy loads
+
+async function loadHistory(alive) {
+  const market = C.state.market;
+  const box = $('#iHistory');
+  if (!box) return;
+  if (historyCache?.market === market) box.innerHTML = historyCache.html;
+  let html;
+  try {
+    html = historyHtml(await C.api(`/api/history?market=${market}&limit=30`, { signal: C.newController().signal, timeout: 20000 }));
+  } catch (e) {
+    if (!alive() || e.name === 'AbortError') return;
+    html = historyHtml({ enabled: true, ok: false, error: e.message });
+  }
+  if (!alive()) return;
+  historyCache = { market, html };
+  const now = $('#iHistory');
+  if (now) now.innerHTML = html;
+}
+
+const when = (iso) => (iso ? new Date(iso).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+
+function historyHtml(d) {
+  const head = (extra = '') => `<div class="section-head"><h2>📚 Saved history</h2>${extra}</div>`;
+  if (!d.enabled) {
+    return `${head()}<div class="card"><p class="small muted" style="margin:0">Nothing is being saved yet. Connect MongoDB by setting <code>MONGODB_URI</code> (see the README) and every intraday scan and every best-of-the-best pick will be kept here.</p></div>`;
+  }
+  if (!d.ok) {
+    return `${head()}<div class="card"><p class="small down" style="margin:0">⚠ The database is configured but not reachable: ${C.esc(d.error || 'unknown error')}</p><p class="small muted" style="margin:6px 0 0">Everything else on this page still works; nothing is saved until the connection is fixed.</p></div>`;
+  }
+  const lastScan = d.scans[0];
+  const sub = `<span class="small muted">Saved in MongoDB · ${d.scans.length} recent scan${d.scans.length === 1 ? '' : 's'}${lastScan ? ` · last ${C.esc(when(lastScan.ts))}` : ''}</span>`;
+  if (!d.picks.length) {
+    return `${head(sub)}<div class="card"><p class="small muted" style="margin:0">No picks saved yet. A best-of-the-best pick is saved the first time a stock passes every check <b>while the market is open</b>, with its buy zone, stop-loss and targets exactly as first shown.</p></div>`;
+  }
+  const rows = d.picks.map((p) => {
+    const P = (v) => C.fmtPrice(v, p.currency, p.symbol);
+    const drift = C.isNum(p.lastPrice) && C.isNum(p.entry) && p.entry > 0 ? ((p.lastPrice - p.entry) / p.entry) * 100 : null;
+    const sc = board?.scenarios?.[p.scenario]?.label || p.scenario || '—';
+    return `<tr data-sym="${C.esc(p.symbol)}">
+      <td>${C.esc(p.sessionDate || '')}</td>
+      <td><b>${C.esc(p.name)}</b><div class="small muted">${C.esc(p.symbol)}</div></td>
+      <td>${C.esc(sc)}</td>
+      <td>${C.esc(when(p.firstSeen))}</td>
+      <td class="r num">${P(p.entry)}</td>
+      <td class="r num">${P(p.stopLoss)}</td>
+      <td class="r num">${P(p.target1)}</td>
+      <td class="r num">${P(p.target2)}</td>
+      <td class="r num">${C.isNum(p.riskReward) ? `1 : ${p.riskReward.toFixed(1)}` : '—'}</td>
+      <td class="r num">${C.isNum(p.signalScore) ? `+${p.signalScore}` : '—'}</td>
+      <td class="r num ${C.cls(drift)}" title="Price the last time this stock still passed every check — not an exit price or a result">${P(p.lastPrice)} <span class="small">(${C.fmtPct(drift)})</span></td>
+    </tr>`;
+  }).join('');
+  return `${head(sub)}<div class="card">
+    <div class="table-wrap"><table>
+      <thead><tr><th>Session</th><th>Stock</th><th>Scenario</th><th>First signalled</th><th class="r">Entry</th><th class="r">Stop-loss</th><th class="r">Target 1</th><th class="r">Target 2</th><th class="r">R : R</th><th class="r">Score</th><th class="r" title="Price the last time it still passed every check">Last seen</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <p class="small muted" style="margin:8px 0 0">Levels are frozen as first signalled. "Last seen" is the price when the stock last still passed every check — it is <b>not</b> a trade result.</p>
+  </div>`;
 }
 
 // ---------- banner: market status + direction ----------

@@ -6,7 +6,7 @@ Live market dashboard, Buy/Hold/Sell signals, entry / stop-loss / target levels,
 
 ## Run it
 
-Needs Node.js 18+ (no `npm install` required — zero dependencies).
+Needs Node.js 18+. There are no dependencies to install **unless you want to save history to MongoDB** (then run `npm install` once — see [Saving data to MongoDB](#saving-data-to-mongodb-optional)).
 
 - Double-click **`start.bat`**, or
 - `npm start` (opens the browser) / `node server.js`
@@ -14,6 +14,37 @@ Needs Node.js 18+ (no `npm install` required — zero dependencies).
 Then open http://localhost:3000. If port 3000 is busy it picks the next free one.
 
 `npm test` runs the unit tests (on Node 22+ use `node --test test/*.test.js` if `npm test` complains about the `test/` folder).
+
+## Saving data to MongoDB (optional)
+
+The app works fine without a database. Connect one and it keeps a history of the intraday desk:
+
+| Collection | What is saved | When |
+|---|---|---|
+| `picks` | Every **best-of-the-best** intraday BUY: stock, scenario, buy zone, stop-loss, targets, risk:reward, score and checks passed — **frozen as first signalled** — plus the last time it still qualified. Kept forever (about 0.5 KB each). | The first time a stock passes every check **while the market is open** |
+| `scans` | A snapshot of the whole desk: every stock's score, scenario and plan, the daily signal, market direction and the Strong Buy lists (about 14 KB each). Deleted automatically after 30 days. | Every 5 minutes while the market is open (one final snapshot per session after the close) — **only while someone has the Intraday page open or calls `/api/intraday`** |
+
+Paper-trading accounts and watchlists stay in your browser; they are not sent to the database.
+
+**Set it up** — pick one database, then start the app:
+
+1. `npm install` (installs the MongoDB driver).
+2. **Database on this computer:** run `npm run db` in its own terminal and leave it open (data is kept in `.mongodb/data`; it only listens on 127.0.0.1). It uses `.mongodb/mongod`, or any `mongod` on your PATH (`brew tap mongodb/brew && brew install mongodb-community` on macOS).
+   **Or MongoDB Atlas (cloud, free tier):** create a cluster, a database user (Database Access) and allow your IP (Network Access), then copy the connection string — `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/`. URL-encode special characters in the password (`@` → `%40`).
+3. Copy `.env.example` to `.env` and set `MONGODB_URI=` (local: `mongodb://127.0.0.1:27017`). `.env` is git-ignored; real environment variables override it.
+4. `npm start`. The console says `MongoDB: connected`, or why it could not. The Intraday page shows a **📚 Saved history** table, and `/api/db-status` reports `{ ok, scans, picks }`.
+
+If something else already uses port 3000 on your computer, add `PORT=3100` (any free port) to `.env`.
+
+Options in `.env`: `MONGODB_DB` (default `stocksense`), `SCAN_TTL_DAYS` (default 30; `0` keeps scans forever), `MONGODB_TIMEOUT_MS` (default 5000).
+
+**Good to know**
+
+- A database problem never breaks the app: saving has a 2.5 s time limit, a failed connection is retried at most every 30 s, and errors are logged once a minute with the connection string removed.
+- Writes are idempotent (fixed IDs per 5-minute slot / per pick), so refreshing, several browser tabs or several server instances never create duplicates.
+- On **Vercel**: add `MONGODB_URI` (and optionally the other variables) under Project → Settings → Environment Variables, and in Atlas → Network Access allow Vercel's addresses (`0.0.0.0/0` is the usual choice because Vercel IPs change). Vercel installs the driver from `package.json` automatically.
+- `/api/history` and `/api/db-status` are read-only and never expose the connection string, but on a public deployment anyone can read the saved signal history.
+- To run the database tests: `TEST_MONGODB_URI=mongodb://127.0.0.1:27017 node --test test/*.test.js` (uses a temporary database and deletes it afterwards).
 
 ## Features
 
@@ -24,6 +55,7 @@ Then open http://localhost:3000. If port 3000 is busy it picks the next free one
 | Top Picks | Scans 30 large caps per market. Ranks by short-term setup score or long-term trend strength. Filters include **⭐ Strong Buy** (score +50 or more). |
 | ⚡ Intraday | The intraday desk, on 5-minute candles. **🏆 Best of the best** — the intraday BUY picks that pass *every* check (shown separately, with a pass/fail checklist, buy zone, stop-loss and targets). **⭐ Strong Buy stocks** — one list from the daily chart (swing) and one from the live 5-minute chart. **🔍 Every scenario** — all 30 stocks sorted into 14 scenarios (opening-range breakout, gap-up holding / fading, gap-down reversal, pullback to VWAP, steady uptrend / downtrend, overextended, range-bound, low volume …) with filters. Shows market direction (index) and time left in the session. Auto-refreshes every minute while the market is open. |
 | Watchlist | Saved in your browser. |
+| ⚡ Intraday → 📚 Saved history | The best-of-the-best picks saved in MongoDB (see above) with their frozen buy zone, stop-loss and targets. Appears at the bottom of the Intraday tab; explains how to connect when no database is set. |
 | Paper Trade | Practise with **virtual money** (₹10,00,000 / $100,000) at live prices, in a broker-style layout: Buy/Sell order window (Delivery or Intraday, Market / Limit / SL-M, quantity, margin and approximate charges), **Holdings, Positions, Orders** and a **P&L report**. Stop-loss and target orders trigger automatically while the app is open, and every closed trade gets a plain-English review (R-multiple, charges, did you use a stop-loss). A step-by-step *Learn* guide walks you through your first trade. Stored only in your browser; separate India and US accounts. Buy/Sell buttons also appear on every stock's Analyse page. |
 | News | Market or topic news with positive/negative headline tagging. |
 | Academy | A 22-class course from beginner to advanced in **English and Malayalam (മലയാളം)**: how the market works, opening an account, how to buy and sell, reading candles, trends, support/resistance, indicators, chart analysis routine, entry, stop-loss, exits, risk management, psychology, fundamentals and strategies. Diagrams, a quiz per class, progress tracking and "try it" links into live charts. |
@@ -59,6 +91,9 @@ Unofficial endpoints can change or rate-limit; the server retries, caches (3 min
 
 ```
 server.js            HTTP server + API routes
+lib/env.js           tiny .env loader
+lib/db.js            optional MongoDB connection (lazy, retry back-off, secret-safe errors)
+lib/store.js         what is saved (scans, picks), how, and how it is read back
 lib/yahoo.js         data fetching, caching, retries, normalisation
 lib/indicators.js    SMA, EMA, RSI, MACD, Bollinger, ATR, pivots
 lib/analysis.js      scoring, levels, trade plan, summaries

@@ -4,6 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
+import { loadEnv } from './lib/env.js';
+import { getDb, dbEnabled, safeError } from './lib/db.js';
+import { persistBoard, ensureIndexes, listPicks, listScans, dbStats } from './lib/store.js';
 import { getChart, search, AppError } from './lib/yahoo.js';
 import { analyze, summarize, round } from './lib/analysis.js';
 import { analyzeIntraday, buildItem, buildBoard, evaluateBest, indexBias, SCENARIOS } from './lib/intraday.js';
@@ -11,6 +14,8 @@ import { scoreHeadline, aggregate } from './lib/sentiment.js';
 import { getNews, newsNameFor } from './lib/news.js';
 import { MARKETS } from './lib/universe.js';
 import { mapLimit, cleanSymbol } from './lib/util.js';
+
+loadEnv(); // optional .env file (MONGODB_URI etc.); real environment variables win
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -324,7 +329,7 @@ const routes = {
     const items = ok.map((x) => buildItem(x.m5, x.d1, { minutesLeft }));
     const board = buildBoard(items, { marketBias: direction, marketOpen, minutesLeft });
     const sessionDate = items.map((i) => i.intraday?.sessionDate).filter(Boolean).sort().pop() ?? null;
-    return {
+    const result = {
       market,
       updated: Date.now(),
       marketOpen,
@@ -336,6 +341,36 @@ const routes = {
       scenarios: SCENARIOS,
       ...board,
     };
+    // Keep a history in MongoDB when it is configured. Never fails the request.
+    await persistBoard(result);
+    return result;
+  },
+
+  // Saved history (needs MONGODB_URI): the latest best-of-the-best picks and scan snapshots.
+  async '/api/history'(q) {
+    const market = marketOf(q);
+    if (!dbEnabled()) return { enabled: false, market };
+    const limit = Math.min(100, Math.max(1, parseInt(q.get('limit'), 10) || 30));
+    try {
+      const db = await getDb();
+      await ensureIndexes(db);
+      const [picks, scans] = await Promise.all([listPicks(db, { market, limit }), listScans(db, { market, limit: Math.min(limit, 30) })]);
+      return { enabled: true, ok: true, market, picks, scans };
+    } catch (e) {
+      return { enabled: true, ok: false, market, error: safeError(e) };
+    }
+  },
+
+  // Is the database configured and reachable? (never shows the connection string)
+  async '/api/db-status'() {
+    if (!dbEnabled()) return { enabled: false };
+    try {
+      const db = await getDb();
+      await db.command({ ping: 1 });
+      return { enabled: true, ok: true, ...(await dbStats(db)) };
+    } catch (e) {
+      return { enabled: true, ok: false, error: safeError(e) };
+    }
   },
 
   // One stock's intraday view (the card on the Analyse page).
@@ -476,6 +511,14 @@ function listen(server, port, attemptsLeft = 10) {
   server.listen(port, HOST, () => {
     const url = `http://localhost:${port}`;
     console.log(`\n  StockSense is running at ${url}\n  (press Ctrl+C to stop)\n`);
+    if (dbEnabled()) {
+      getDb().then(
+        () => console.log('  MongoDB: connected — intraday scans and best picks are being saved.\n'),
+        (e) => console.log(`  MongoDB: NOT reachable (${safeError(e)})\n  The app still works; nothing is saved until the connection is fixed.\n`)
+      );
+    } else {
+      console.log('  MongoDB: off (set MONGODB_URI in .env to save history).\n');
+    }
     if (process.argv.includes('--open')) openBrowser(url);
   });
 }
