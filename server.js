@@ -9,7 +9,8 @@ import { getDb, dbEnabled, safeError } from './lib/db.js';
 import { persistBoard, ensureIndexes, listPicks, listScans, dbStats } from './lib/store.js';
 import { getChart, search, AppError } from './lib/yahoo.js';
 import { analyze, summarize, round } from './lib/analysis.js';
-import { analyzeIntraday, buildItem, buildBoard, evaluateBest, indexBias, SCENARIOS } from './lib/intraday.js';
+import { analyzeIntraday, buildItem, evaluateBest, SCENARIOS } from './lib/intraday.js';
+import { runIntradayScan, intradayChart, minutesLeftIn, marketDirection } from './lib/scan.js';
 import { scoreHeadline, aggregate } from './lib/sentiment.js';
 import { getNews, newsNameFor } from './lib/news.js';
 import { MARKETS } from './lib/universe.js';
@@ -17,6 +18,8 @@ import { mapLimit, cleanSymbol, readBody } from './lib/util.js';
 import { normalizeCode, sanitizeItems, SyncError, MAX_TOTAL_BYTES } from './lib/sync-core.js';
 import { syncExchange } from './lib/sync.js';
 import { createLimiter } from './lib/ratelimit.js';
+import { runDigest } from './lib/digest-job.js';
+import { timingSafeEqual } from 'node:crypto';
 
 if (!process.env.NODE_TEST_CONTEXT) loadEnv(); // optional .env file (MONGODB_URI etc.); real env vars win. Skipped under `node --test` so tests can never touch your real database.
 
@@ -43,24 +46,6 @@ const CANDLE_INTERVALS = {
   '1h': { yahoo: '60m', step: 3600, range: '3mo', ttl: 60000, liveRange: '5d', liveTtl: 8000 },
   '1d': { yahoo: '1d', step: 0, range: '2y', ttl: 3 * 60 * 1000, liveRange: '5d', liveTtl: 8000 },
 };
-
-// 5-minute bars for the intraday screens. 5 days gives enough history for the
-// moving averages, yesterday's levels and "normal volume at this time of day".
-const INTRADAY_FETCH = { ttlMs: 30000, step: 300 };
-const intradayChart = (symbol) => getChart(symbol, '5d', '5m', INTRADAY_FETCH);
-const minutesLeftIn = (chart) =>
-  chart.marketState === 'open' && chart.sessionEnd ? Math.max(0, (chart.sessionEnd - Date.now()) / 60000) : null;
-
-// How the whole market is behaving today (first index of the market). Never
-// throws: a missing index just means the "market is not falling" check is skipped.
-async function marketDirection(market) {
-  const ix = MARKETS[market].indices[0];
-  try {
-    return indexBias(await intradayChart(ix.symbol), ix.name);
-  } catch {
-    return null;
-  }
-}
 
 // Files outside /public that the browser is allowed to load (the indicator
 // maths is shared between server and browser).
@@ -313,41 +298,37 @@ const routes = {
   // Intraday desk: every large cap analysed on 5-minute candles, the scenario
   // each one is in, the "best of the best" buys and the Strong Buy lists.
   async '/api/intraday'(q) {
-    const market = marketOf(q);
-    const symbols = MARKETS[market].stocks;
-    const [direction, fetched] = await Promise.all([
-      marketDirection(market),
-      mapLimit(symbols, 5, async (s) => {
-        const [m5, d1] = await Promise.all([intradayChart(s), getChart(s).catch(() => null)]);
-        return { m5, d1 };
-      }),
-    ]);
-    const ok = fetched.filter((r) => r.ok).map((r) => r.value);
-    if (!ok.length) throw new AppError(fetched[0]?.error?.message || 'Could not load intraday data.', 503);
-    const failed = [];
-    fetched.forEach((r, i) => {
-      if (!r.ok) failed.push({ symbol: symbols[i], error: r.error?.message || 'Failed' });
-    });
-    const marketOpen = ok.some((x) => x.m5.marketState === 'open');
-    const minutesLeft = ok.map((x) => minutesLeftIn(x.m5)).find((v) => v != null) ?? null;
-    const items = ok.map((x) => buildItem(x.m5, x.d1, { minutesLeft }));
-    const board = buildBoard(items, { marketBias: direction, marketOpen, minutesLeft });
-    const sessionDate = items.map((i) => i.intraday?.sessionDate).filter(Boolean).sort().pop() ?? null;
-    const result = {
-      market,
-      updated: Date.now(),
-      marketOpen,
-      minutesLeft: minutesLeft == null ? null : Math.round(minutesLeft),
-      sessionDate,
-      marketBias: direction,
-      total: symbols.length,
-      failed,
-      scenarios: SCENARIOS,
-      ...board,
-    };
+    const result = await runIntradayScan(marketOf(q));
     // Keep a history in MongoDB when it is configured. Never fails the request.
     await persistBoard(result);
     return result;
+  },
+
+  // The morning digest for Telegram. Called by the scheduler (Vercel Cron sends "Authorization: Bearer <CRON_SECRET>").
+  // ?market=IN|US  ?dry=1 (build the message, send nothing)  ?force=1 (send even if already sent today)
+  async '/api/cron/digest'(q, req) {
+    const secret = process.env.CRON_SECRET?.trim();
+    if (!secret) throw new AppError('The daily digest is not set up: set CRON_SECRET (and the Telegram variables) on the server.', 503);
+    const got = Buffer.from(String(req?.headers?.authorization || ''));
+    const want = Buffer.from(`Bearer ${secret}`);
+    if (got.length !== want.length || !timingSafeEqual(got, want)) throw new AppError('Unauthorized.', 401);
+
+    const requested = q.get('market') ? [q.get('market')] : String(process.env.DIGEST_MARKETS || 'IN').split(',');
+    const markets = [...new Set(requested.map((m) => m.trim().toUpperCase()))].filter((m) => MARKETS[m]);
+    if (!markets.length) throw new AppError('Unknown market.', 400);
+    const dry = q.get('dry') === '1';
+    const force = q.get('force') === '1';
+    const results = [];
+    for (const market of markets) {
+      try {
+        results.push(await runDigest({ market, dry, force }));
+      } catch (e) {
+        results.push({ market, sent: false, error: e instanceof AppError ? e.message : 'The digest failed.', status: e.status || 500 });
+        if (!(e instanceof AppError)) console.error(e);
+      }
+    }
+    if (results.every((r) => r.error)) throw new AppError(results[0].error, results[0].status || 502);
+    return { ok: true, results };
   },
 
   // Saved history (needs MONGODB_URI): the latest best-of-the-best picks and scan snapshots.
@@ -523,7 +504,7 @@ export function createServer() {
       if (!handler) return sendJson(res, 404, { error: 'Unknown API endpoint' });
       const started = Date.now();
       try {
-        const data = await handler(url.searchParams);
+        const data = await handler(url.searchParams, req);
         sendJson(res, 200, data);
       } catch (err) {
         const status = err instanceof AppError ? err.status : 500;

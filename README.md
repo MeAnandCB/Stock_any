@@ -69,6 +69,24 @@ From then on changes are uploaded a moment after you make them and downloaded wh
 3. In Atlas → Network Access, allow `0.0.0.0/0` (Vercel's addresses change).
 4. Redeploy, open the `https://…vercel.app` address, and use **☁️ Sync** there. Use the **same address** every time on that device. Data from a different address (e.g. your old `localhost:3000`) is brought across by creating the code there first, then connecting from the new address.
 
+## 📲 Daily Telegram digest
+
+Every weekday morning your Telegram gets one message with **5 intraday ideas** (buy zone, stop-loss, two targets, risk:reward) and **5 long-term ideas** (trend strength, 1-year return, buy zone, exit level), picked from the 30 large caps the app scans. The intraday ideas are the same signals as the ⚡ Intraday tab (stocks that pass every best-of-the-best check come first; moves on thin volume are left out); the long-term ideas are the strongest steady uptrends above their 200-day average. If fewer than 5 stocks qualify you get fewer — it never pads the list, and it says so when the best trade is no trade.
+
+**Set it up (once)**
+
+1. In Telegram open **@BotFather** → `/newbot` → choose a name → copy the **token**.
+2. Put it in `.env`: `TELEGRAM_BOT_TOKEN=…`. Open your new bot in Telegram, press **Start** and send "hi".
+3. Run `npm run telegram:setup -- --save --test` — it finds your chat, writes `TELEGRAM_CHAT_ID` into `.env` and sends a test message.
+4. Try it: `npm run digest -- --dry` (shows the message, sends nothing), then `npm run digest` (sends it).
+5. To have it arrive by itself, deploy (see *Put it online*) and add these in Vercel → Settings → Environment Variables: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `MONGODB_URI` and **`CRON_SECRET`** (any long random text, e.g. `openssl rand -hex 24`; Vercel sends it to the job automatically, and without it nobody can trigger the endpoint). Optional: `APP_URL` (adds an "Open StockSense" link), `DIGEST_MARKETS` (`IN`, `US` or `IN,US`). Then redeploy.
+
+**When it runs.** `vercel.json` schedules `/api/cron/digest` at `30 4 * * 1-5` (UTC) = **10:00 IST, Monday–Friday**. On Vercel's free (Hobby) plan a daily job runs at some point *within* that hour, so expect it between 10:00 and 10:59 IST; change the time by editing the schedule (UTC). Intraday signals need about 30 minutes of trading, so don't schedule it before ~09:45 IST — if it does run too early, or on a holiday, the digest says so honestly and still sends the long-term ideas. To test on the live site, use Vercel → Settings → Cron Jobs → **Run**. You can also run it from your own computer with `npm run digest` (e.g. from `cron` or macOS `launchd`).
+
+- Sent **once per market per day** (a guard in the database stops duplicates when the scheduler retries); `?force=1` overrides it. Each morning's scan and the ideas it sent (with their levels) are saved in MongoDB (`digests` collection).
+- The bot token is a password: it lives only in `.env` / Vercel, never in logs or error messages.
+- Signals come from price charts only — they say nothing about a company's profits, debt or valuation. Not investment advice; always use the stop-loss.
+
 ## Features
 
 | Tab | What it does |
@@ -76,6 +94,7 @@ From then on changes are uploaded a moment after you make them and downloaded wh
 | Dashboard | Indices (NIFTY, SENSEX, Bank Nifty, VIX / S&P, NASDAQ, Dow, VIX), market mood, best setups, top gainers/losers, headlines. Auto-refreshes every 5 min. |
 | Analyse | **Live candlestick chart** (1 min / 5 min / 15 min / 1 hour / Daily) that updates every 5–10 s while the market is open, with a LIVE badge, pause button and live header price. Chart overlays: 20/50/200-bar averages, Bollinger Bands, support/resistance, trade-plan lines, RSI and MACD. Signal score (−100…+100), entry zone, stop-loss, 2 targets, risk:reward, plain-English explanation of every indicator, an **Intraday view** card (VWAP, opening range, relative volume, intraday plan and best-of-the-best checklist), position-size calculator, stock news. |
 | Top Picks | Scans 30 large caps per market. Ranks by short-term setup score or long-term trend strength. Filters include **⭐ Strong Buy** (score +50 or more). |
+| 📲 Telegram digest | A weekday-morning message with 5 intraday + 5 long-term ideas (see above). |
 | ⚡ Intraday | The intraday desk, on 5-minute candles. **🏆 Best of the best** — the intraday BUY picks that pass *every* check (shown separately, with a pass/fail checklist, buy zone, stop-loss and targets). **⭐ Strong Buy stocks** — one list from the daily chart (swing) and one from the live 5-minute chart. **🔍 Every scenario** — all 30 stocks sorted into 14 scenarios (opening-range breakout, gap-up holding / fading, gap-down reversal, pullback to VWAP, steady uptrend / downtrend, overextended, range-bound, low volume …) with filters. Shows market direction (index) and time left in the session. Auto-refreshes every minute while the market is open. |
 | Watchlist | Saved in your browser. |
 | ⚡ Intraday → 📚 Saved history | The best-of-the-best picks saved in MongoDB (see above) with their frozen buy zone, stop-loss and targets. Appears at the bottom of the Intraday tab; explains how to connect when no database is set. |
@@ -116,6 +135,10 @@ Unofficial endpoints can change or rate-limit; the server retries, caches (3 min
 server.js            HTTP server + API routes
 lib/env.js           tiny .env loader
 lib/db.js            optional MongoDB connection (lazy, retry back-off, secret-safe errors)
+lib/scan.js          the intraday market scan shared by the website and the digest
+lib/digest.js        picks and words the morning digest (pure, tested)
+lib/digest-job.js    runs it: scan → message → Telegram, once a day
+lib/telegram.js      Telegram Bot API sender (token never logged)
 lib/store.js         what is saved (scans, picks), how, and how it is read back
 lib/yahoo.js         data fetching, caching, retries, normalisation
 lib/indicators.js    SMA, EMA, RSI, MACD, Bollinger, ATR, pivots

@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js --open",
     "test": "node --test test/",
-    "db": "node scripts/local-db.js"
+    "db": "node scripts/local-db.js",
+    "digest": "node scripts/send-digest.js",
+    "telegram:setup": "node scripts/telegram-setup.js"
   },
   "engines": {
     "node": ">=18.17"
