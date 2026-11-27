@@ -71,7 +71,7 @@ From then on changes are uploaded a moment after you make them and downloaded wh
 
 ## 📲 Daily Telegram digest
 
-Every weekday morning your Telegram gets one message with **5 intraday ideas** (buy zone, stop-loss, two targets, risk:reward) and **5 long-term ideas** (trend strength, 1-year return, buy zone, exit level), picked from the 30 large caps the app scans. The intraday ideas are the same signals as the ⚡ Intraday tab (stocks that pass every best-of-the-best check come first; moves on thin volume are left out); the long-term ideas are the strongest steady uptrends above their 200-day average. If fewer than 5 stocks qualify you get fewer — it never pads the list, and it says so when the best trade is no trade.
+Every weekday morning your Telegram gets the same **Final Picks** as the app: up to 5 each for **intraday** (only stocks that pass every check — plain buy signals lost money in testing), **short term** and **long term**, each section followed by what testing says about its rule. Every candidate's headlines are screened: a stock with serious warning words is held back and named, and negative headlines are flagged. If nothing qualifies it says so — it never pads a list.
 
 **Set it up (once)**
 
@@ -87,14 +87,36 @@ Every weekday morning your Telegram gets one message with **5 intraday ideas** (
 - The bot token is a password: it lives only in `.env` / Vercel, never in logs or error messages.
 - Signals come from price charts only — they say nothing about a company's profits, debt or valuation. Not investment advice; always use the stop-loss.
 
+## 📊 How good are the signals? (read this first)
+
+`npm run backtest` replays the app's own rules on past prices and writes `public/evidence.json`, which the app shows beside its picks. It only uses data available at each moment, buys at the next candle, assumes the stop is hit first when one candle touches both, takes off costs (intraday 0.10%, delivery 0.25% a round trip) and compares each pick with buying *any* stock at the same moment.
+
+Results of the run of 27 Nov 2026 (intraday: 55 sessions; short term: 4 years; 30 NSE large caps):
+
+| Rule | Result | Verdict |
+|---|---|---|
+| Any plain intraday buy signal, tight stop | 1,322 trades, −0.07% a trade | Lost money — no longer recommended |
+| Intraday, passes every check (wide stop, held to the close) | 78 trades, +0.44% a trade, 63% winners | Slightly positive, **not proven** (too few trades) |
+| Daily Buy / Strong Buy | 1,392 trades, +0.12%; negative since mid-2025 | No reliable edge |
+| Short-term list (Strong Buy, above 200-day, RSI < 70) | 938 trades, +0.30% a trade, 45% winners | Slightly positive, **not proven** |
+| Long-term top 5, held 1 year | +11.8% vs +13.0% for holding all 30 | **Did not beat** holding everything |
+
+Several extra short-term filters looked good on older data and lost money on recent data, so they were **not** adopted. Limits: past results do not predict the future; the stock list is today's large companies (survivorship bias); 60 days of 5-minute data is one short market period. Re-run the test now and then, and do not tune rules until they look good on all of the past — that is how a rule stops working on the future.
+
+Two rules changed because of the test: only stocks passing **every** check are put forward for intraday, and the intraday stop is **twice** as far as the nearest support (the tight stop was hit about twice as often), with the position closed by the end of the day.
+
+**Data fix:** the provider sometimes returns the latest daily candle without a closing price. It used to be dropped and the live price written over the day before, which could show a falling stock as rising. The candle is now completed from the live quote.
+
 ## Features
 
 | Tab | What it does |
 |---|---|
+| 🎯 Final Picks | Intraday, short-term and long-term picks on one page, each with the test evidence, buy zone, stop, number of shares for your risk limit, a headline screen (held back if serious), and a 12-point *before you buy* checklist. |
+| 🔎 Stock Check | For **any** stock, especially one that just fell: how unusual the day was, whether the market fell too, volume, broken support / averages, what happened after similar falls over ~5 years, news, a plain verdict (do not buy more / wait / trend intact), what to wait for, an "I already own it" calculator (including what averaging down really does) and a stop outside normal daily noise. |
 | Dashboard | Indices (NIFTY, SENSEX, Bank Nifty, VIX / S&P, NASDAQ, Dow, VIX), market mood, best setups, top gainers/losers, headlines. Auto-refreshes every 5 min. |
 | Analyse | **Live candlestick chart** (1 min / 5 min / 15 min / 1 hour / Daily) that updates every 5–10 s while the market is open, with a LIVE badge, pause button and live header price. Chart overlays: 20/50/200-bar averages, Bollinger Bands, support/resistance, trade-plan lines, RSI and MACD. Signal score (−100…+100), entry zone, stop-loss, 2 targets, risk:reward, plain-English explanation of every indicator, an **Intraday view** card (VWAP, opening range, relative volume, intraday plan and best-of-the-best checklist), position-size calculator, stock news. |
 | Top Picks | Scans 30 large caps per market. Ranks by short-term setup score or long-term trend strength. Filters include **⭐ Strong Buy** (score +50 or more). |
-| 📲 Telegram digest | A weekday-morning message with 5 intraday + 5 long-term ideas (see above). |
+| 📲 Telegram digest | The Final Picks, sent on weekday mornings (see above). |
 | ⚡ Intraday | The intraday desk, on 5-minute candles. **🏆 Best of the best** — the intraday BUY picks that pass *every* check (shown separately, with a pass/fail checklist, buy zone, stop-loss and targets). **⭐ Strong Buy stocks** — one list from the daily chart (swing) and one from the live 5-minute chart. **🔍 Every scenario** — all 30 stocks sorted into 14 scenarios (opening-range breakout, gap-up holding / fading, gap-down reversal, pullback to VWAP, steady uptrend / downtrend, overextended, range-bound, low volume …) with filters. Shows market direction (index) and time left in the session. Auto-refreshes every minute while the market is open. |
 | Watchlist | Saved in your browser. |
 | ⚡ Intraday → 📚 Saved history | The best-of-the-best picks saved in MongoDB (see above) with their frozen buy zone, stop-loss and targets. Appears at the bottom of the Intraday tab; explains how to connect when no database is set. |
@@ -111,9 +133,9 @@ Search accepts company names ("infosys") or symbols. In India mode, `RELIANCE` r
 
 ### Intraday signals
 
-Computed on 5-minute candles (last 5 sessions) in `lib/intraday.js`. Ten factors give a −100…+100 score: price vs **VWAP**, **opening-range** (first 15 min) breakout, 9 vs 21 EMA, RSI, MACD, relative volume (vs the same clock time on earlier days), change vs yesterday's close, yesterday's high/low, the last hour's high/low structure and position in today's range. Each stock is then placed in one scenario, and gets a long trade plan (stop under the nearest structure / VWAP, targets at the next resistance or 2R / 3R).
+Computed on 5-minute candles (last 5 sessions) in `lib/intraday.js`. Ten factors give a −100…+100 score: price vs **VWAP**, **opening-range** (first 15 min) breakout, 9 vs 21 EMA, RSI, MACD, relative volume (vs the same clock time on earlier days), change vs yesterday's close, yesterday's high/low, the last hour's high/low structure and position in today's range. Each stock is then placed in one scenario, and gets a long trade plan (the setup is judged on the risk to the nearest structure / VWAP; the stop you use is twice as far, the optional target twice that risk, and the exit is the end of the day).
 
-A stock is **best of the best** only if all of these hold: intraday Strong Buy · a buy scenario · above VWAP · 9 EMA above 21 EMA · volume ≥ 1.2× normal · RSI 50–75 · room to run before yesterday's high / pivots · daily chart is Buy or Strong Buy · the index is not falling · at least 45 minutes left (when the market is open). When nothing passes, the page says so and lists the closest candidates with what is missing — "no trade" is a valid answer.
+A stock **passes every check** only if all of these hold: intraday Strong Buy · a buy scenario · above VWAP · 9 EMA above 21 EMA · volume ≥ 1.2× normal · RSI 50–75 · room to run before yesterday's high / pivots · daily chart is Buy or Strong Buy · the index is not falling · at least 45 minutes left (when the market is open). When nothing passes, the page says so and lists the closest candidates with what is missing — "no trade" is a valid answer.
 
 When the market is closed, everything reflects the **last session**; intraday signals go stale quickly, so re-check after the open.
 

@@ -250,3 +250,46 @@ test('academy: English and Malayalam courses are complete and in sync', async ()
     assert.match(ml[id].t, /[\u0D00-\u0D7F]/);
   }
 });
+
+test('a latest daily row without a close is completed from the quote, never written over the day before', () => {
+  const day = (d) => Date.UTC(2026, 10, d, 3, 45) / 1000;
+  const body = (rows, meta) => ({ chart: { result: [{ meta: { symbol: 'HUL', gmtoffset: 19800, ...meta }, timestamp: rows.map((r) => r[0]),
+    indicators: { quote: [{ open: rows.map((r) => r[1]), high: rows.map((r) => r[2]), low: rows.map((r) => r[3]), close: rows.map((r) => r[4]), volume: rows.map((r) => r[5]) }] } }] } });
+  // Real case: 26 Nov came back with close = null.
+  const rows = [[day(23), 2053, 2077, 2015, 2019.1, 100], [day(25), 2028, 2141.8, 2027, 2141.8, 500], [day(26), 2150, 2170.7, 2121, null, 290]];
+  const meta = { regularMarketPrice: 2130.8, regularMarketTime: day(26) + 6 * 3600, regularMarketDayHigh: 2170.7, regularMarketDayLow: 2121, regularMarketVolume: 290 };
+  const c = normalizeChart(body(rows, meta), 'HUL');
+  assert.deepEqual(c.candles.map((k) => k.time), ['2026-11-23', '2026-11-25', '2026-11-26']);
+  assert.equal(c.candles[1].close, 2141.8, 'the day before is untouched');
+  assert.equal(c.candles[1].low, 2027);
+  assert.equal(c.candles[2].close, 2130.8);
+  assert.equal(c.prevClose, 2141.8);
+  assert.ok(c.changePct < 0, `a falling day must show as falling, got ${c.changePct}`);
+  assert.equal(c.repaired, true);
+  // The row missing altogether is rebuilt from the day range in the quote.
+  const gone = normalizeChart(body(rows.slice(0, 2), meta), 'HUL');
+  assert.equal(gone.candles.length, 3);
+  assert.deepEqual([gone.candles[2].time, gone.candles[2].high, gone.candles[2].low, gone.candles[2].close], ['2026-11-26', 2170.7, 2121, 2130.8]);
+  assert.equal(gone.candles[1].close, 2141.8);
+  // Without a day range nothing is invented, and the old day still is not overwritten.
+  const bare = normalizeChart(body(rows.slice(0, 2), { regularMarketPrice: 2130.8, regularMarketTime: day(26) }), 'HUL');
+  assert.equal(bare.candles.length, 2);
+  assert.equal(bare.candles[1].close, 2141.8);
+  // A normal, complete response is not marked as repaired.
+  const fine = normalizeChart(body([rows[0], rows[1]], { regularMarketPrice: 2141.8, regularMarketTime: day(25) + 6 * 3600 }), 'HUL');
+  assert.equal(fine.repaired, false);
+});
+
+test('during market hours, volume and candle patterns come from completed days, not the half-traded one', () => {
+  const candles = makeCandles(260, 0.002);
+  const last = candles[candles.length - 1];
+  const half = { ...last, volume: 1000 }; // barely traded so far
+  const spike = candles[candles.length - 2];
+  const withSpike = [...candles.slice(0, -2), { ...spike, volume: 5e6, close: candles[candles.length - 3].close * 1.02, high: candles[candles.length - 3].close * 1.025 }, half];
+  const open = analyze(chartOf(withSpike, { marketState: 'open' }));
+  const vol = open.factors.find((f) => f.key === 'volume');
+  assert.match(vol.text, /last completed day/);
+  assert.match(vol.text, /Heavy buying/);
+  const closed = analyze(chartOf(withSpike, { marketState: 'closed' }));
+  assert.ok(!/last completed day/.test(closed.factors.find((f) => f.key === 'volume').text));
+});

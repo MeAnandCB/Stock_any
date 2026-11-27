@@ -151,21 +151,18 @@ test('Telegram errors are explained, never contain the token, and 429 is retried
 });
 
 // ---------- choosing ----------
-test('pickIntraday: real buy setups only, best-of-the-best first, thin volume excluded, at most five', () => {
+test('pickIntraday: ONLY stocks that pass every check (plain buy signals lost money in testing), at most five', () => {
   const items = [
-    intra('LOW', { score: 55 }), intra('TOP', { score: 60, best: true }), intra('MID', { score: 80 }), intra('WAIT', { action: 'wait', score: 99 }),
-    intra('AVOID', { action: 'avoid', score: 99 }), intra('THIN', { score: 90, rvol: 0.5 }), intra('NOVOL', { score: 65, rvol: null }),
-    intra('A', { score: 61 }), intra('B', { score: 62 }), intra('C', { score: 63 }),
+    intra('PLAIN', { score: 99 }), intra('P1', { score: 60, best: true }), intra('P2', { score: 90, best: true }), intra('WAIT', { action: 'wait', score: 99 }),
+    ...['A', 'B', 'C', 'D', 'E'].map((x, i) => intra(x, { score: 55 + i, best: true })),
     { symbol: 'EARLY', intraday: { insufficient: true, tooEarly: true }, daily: null }, { symbol: 'NOINTRA', intraday: null, daily: null },
   ];
   const picked = pickIntraday(items).map((x) => x.symbol);
   assert.equal(picked.length, IDEAS);
-  assert.equal(picked[0], 'TOP', 'a stock passing every check leads even with a lower score');
-  assert.equal(picked[1], 'MID');
-  for (const bad of ['WAIT', 'AVOID', 'THIN', 'EARLY', 'NOINTRA']) assert.ok(!picked.includes(bad), bad);
-  assert.deepEqual(pickIntraday([intra('ONLY')]).map((x) => x.symbol), ['ONLY'], 'fewer than five is fine — never padded');
-  assert.deepEqual(pickIntraday([]), []);
-  assert.equal(pickIntraday(items, 2).length, 2);
+  assert.equal(picked[0], 'P2', 'strongest first');
+  for (const bad of ['PLAIN', 'WAIT', 'EARLY', 'NOINTRA']) assert.ok(!picked.includes(bad), bad);
+  assert.deepEqual(pickIntraday([intra('ONLY', { best: true })]).map((x) => x.symbol), ['ONLY'], 'fewer than five is fine — never padded');
+  assert.deepEqual(pickIntraday([intra('PLAIN')]), [], 'a plain buy signal is never put forward');
 });
 
 test('pickLongTerm: strongest steady uptrends, above the 200-day average, not rated Sell', () => {
@@ -197,7 +194,8 @@ test('intradayState tells the truth about what the data can support', () => {
 
 // ---------- the message ----------
 test('a live morning digest lists intraday and long-term ideas in valid Telegram HTML', () => {
-  const items = [intra('HDFCBANK.NS', { best: true, score: 84 }), intra('SBIN.NS'), long('TCS.NS', { lt: 62, rsi: 72 }), long('TITAN.NS', { lt: 50, verdict: 'hold', label: 'Hold / Wait', action: 'wait' })];
+  const items = [intra('HDFCBANK.NS', { best: true, score: 84 }), intra('SBIN.NS'), long('TCS.NS', { lt: 62, rsi: 72 }), long('TITAN.NS', { lt: 50, verdict: 'hold', label: 'Hold / Wait', action: 'wait' }),
+    long('WIPRO.NS', { lt: 10, verdict: 'strong_buy', label: 'Strong Buy', score: 66, rsi: 58 })];
   const d = buildDigest(scan(items), NOW, { appUrl: 'https://example.vercel.app/' });
   assert.equal(d.state, 'live');
   assert.equal(d.messages.length, 1);
@@ -205,21 +203,25 @@ test('a live morning digest lists intraday and long-term ideas in valid Telegram
   assert.match(d.text, /<b>StockSense morning digest<\/b>/);
   assert.match(d.text, /Thu 26 Nov, 10:30 IST/);
   assert.match(d.text, /NIFTY 50 \+0\.4% \(bullish\) · market open, 5 h 30 min left/);
-  assert.match(d.text, /1\. <b>HDFCBANK<\/b> ₹1,000\.00 \(\+1\.2%\) — Opening-range breakout 🏆/);
-  assert.match(d.text, /Buy ₹995\.50–₹1,000\.00 · Stop ₹990\.00 · T1 ₹1,020\.00 · T2 ₹1,030\.00 · R:R 1:2\.0/);
+  assert.match(d.text, /1\. <b>HDFCBANK<\/b> ₹1,000\.00 \(\+1\.2%\) — Opening-range breakout\n/);
+  assert.match(d.text, /Buy ₹995\.50–₹1,000\.00 · Stop ₹990\.00 · Sell by 3:15 PM \(optional target ₹1,020\.00\)/);
+  assert.ok(!d.text.includes('SBIN'), 'a plain buy signal is not sent');
+  assert.match(d.text, /Testing: Slightly positive — NOT proven\. 78 past trades/);
+  assert.match(d.text, /Short term<\/b> — 1 to 4 weeks\n1\. <b>WIPRO<\/b> ₹2,500\.00 — Daily score \+66 · RSI 58/);
+  assert.match(d.text, /Short term[\s\S]*Testing: Slightly positive — NOT proven\. 938 past trades/);
+  assert.match(d.text, /ideas to research, not buy calls/);
+  assert.match(d.text, /Did NOT beat simply holding all the stocks/);
   assert.match(d.text, /Score \+84 · volume 1\.6× normal · RSI 62/);
-  assert.match(d.text, /2\. <b>SBIN<\/b>/, '.NS suffix is dropped');
-  assert.match(d.text, /2 of 4 large caps have a buy setup/);
   assert.match(d.text, /1\. <b>TCS<\/b> ₹2,500\.00 — Trend \+62 · 1Y \+18\.4% · RSI 72 · Daily: Buy/);
   assert.match(d.text, /Buy zone ₹2,480\.00–₹2,500\.00 · Exit if it closes below ₹2,310\.00 · ⚠ stretched — stagger your buying/);
   assert.match(d.text, /Wait for a dip to ₹2,480\.00–₹2,500\.00/);
   assert.match(d.text, /not investment advice/);
-  assert.match(d.text, /<a href="https:\/\/example\.vercel\.app\/#\/intraday">Open StockSense<\/a>/);
-  assert.deepEqual(d.intraday.map((x) => x.symbol), ['HDFCBANK.NS', 'SBIN.NS']);
+  assert.match(d.text, /<a href="https:\/\/example\.vercel\.app\/#\/final">Open StockSense<\/a>/);
+  assert.deepEqual(d.intraday.map((x) => x.symbol), ['HDFCBANK.NS']);
 });
 
 test('names are escaped, so nothing in the data can break or inject into the message', () => {
-  const evil = intra('<b>EVIL&CO.NS', { scenario: 'Break <out> & run' });
+  const evil = intra('<b>EVIL&CO.NS', { scenario: 'Break <out> & run', best: true });
   const d = buildDigest(scan([evil, long('A&B.NS', { lt: 60 })]), NOW, { appUrl: 'https://x.y/"><script>' });
   assertTelegramHtml(d.text);
   assert.ok(d.text.includes('&lt;b&gt;EVIL&amp;CO'));
@@ -245,21 +247,22 @@ test('the digest is honest when intraday ideas are not possible, but still gives
   const early = buildDigest(scan([{ symbol: 'A', intraday: { insufficient: true, tooEarly: true }, daily: null }], { sessionDate: null }), NOW);
   assert.match(early.text, /only just opened/);
   assert.match(early.text, /No large cap currently shows a strong, steady long-term uptrend/);
-  const none = buildDigest(scan([intra('W', { action: 'wait' })]), NOW);
-  assert.match(none.text, /No stock has a clean buy setup right now.*no trade/s);
+  const none = buildDigest(scan([intra('W')]), NOW);
+  assert.match(none.text, /No stock passes every check right now.*no trade/s);
 });
 
 test('the US digest uses dollars and New York time', () => {
-  const us = { ...intra('AAPL'), currency: 'USD', price: 354.07 };
+  const us = { ...intra('AAPL', { best: true }), currency: 'USD', price: 354.07 };
   const d = buildDigest({ ...scan([us], { sessionDate: '2026-11-25' }), market: 'US' }, Date.UTC(2026, 10, 25, 15, 0), {});
   assert.match(d.text, /Wed 25 Nov, 10:00 ET/);
   assert.match(d.text, /United States/);
   assert.match(d.text, /<b>AAPL<\/b> \$354\.07/);
   assert.ok(!d.text.includes('₹'));
+  assert.ok(!/past trades/.test(d.text), 'India test results are never quoted for another market');
 });
 
 test('an oversized digest is split into several messages that are each valid', () => {
-  const many = Array.from({ length: 5 }, (_, i) => intra(`S${i}.NS`, { scenario: 'Opening-range breakout '.repeat(30) }));
+  const many = Array.from({ length: 5 }, (_, i) => intra(`S${i}.NS`, { best: true, scenario: 'Opening-range breakout '.repeat(30) }));
   const d = buildDigest(scan(many), NOW);
   assert.ok(d.messages.length > 1);
   for (const m of d.messages) assert.ok(m.length <= LIMIT);

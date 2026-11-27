@@ -8,6 +8,7 @@
     "start": "node server.js --open",
     "test": "node --test test/",
     "db": "node scripts/local-db.js",
+    "backtest": "node scripts/backtest.js",
     "digest": "node scripts/send-digest.js",
     "telegram:setup": "node scripts/telegram-setup.js"
   },

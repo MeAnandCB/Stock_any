@@ -224,10 +224,10 @@ function bestCard(it, rank) {
     <div class="plan-grid four">
       <div class="plan-item entry"><div class="k">BUY ZONE</div><div class="v num">${P(p.entryLow)} – ${P(p.entryHigh)}</div></div>
       <div class="plan-item stop"><div class="k">STOP-LOSS</div><div class="v num">${P(p.stopLoss)}</div></div>
-      <div class="plan-item target"><div class="k">TARGET 1</div><div class="v num">${P(p.target1)}</div></div>
-      <div class="plan-item target"><div class="k">TARGET 2</div><div class="v num">${P(p.target2)}</div></div>
+      <div class="plan-item"><div class="k">EXIT</div><div class="v">By 3:15 PM</div></div>
+      <div class="plan-item target"><div class="k">OPTIONAL TARGET</div><div class="v num">${P(p.target1)}</div></div>
     </div>
-    <div class="small muted">Risk : Reward <b>1 : ${C.isNum(p.riskReward) ? p.riskReward.toFixed(1) : '—'}</b> · risk ${C.fmtNum(p.riskPct, 2)}% per share · ${scorePill(i)} · daily: ${C.verdictPill(it.daily?.verdict)}</div>
+    <div class="small muted">Wide stop, so buy fewer shares · risk ${C.fmtNum(p.riskPct, 2)}% per share · ${scorePill(i)} · daily: ${C.verdictPill(it.daily?.verdict)}</div>
     ${top ? `<div class="small" style="margin-top:10px"><b>All ${it.best.total} checks passed</b></div>${checklistHtml(it.best.checks)}` : `<details class="small" style="margin-top:8px"><summary>All ${it.best.total} checks passed</summary>${checklistHtml(it.best.checks)}</details>`}
     <div class="stock-actions" style="justify-content:flex-start;margin-top:12px">
       <button type="button" class="btn buy" data-pt="${C.esc(it.symbol)}" data-name="${C.esc(it.name)}" title="Practise with virtual money — no real order is placed">Paper Buy (Intraday)</button>
@@ -250,8 +250,9 @@ function nearMissRow(it) {
 }
 
 function bestHtml(d) {
-  const head = `<div class="section-head"><h2>🏆 Best of the best — intraday BUY</h2>
-    <span class="small muted">A stock must pass <b>every</b> check below. Shown separately from the lists that follow.</span></div>`;
+  const head = `<div class="section-head"><h2>🏆 Strictest setups — pass every check</h2>
+    <span class="small muted">Shown separately from the lists that follow.</span></div>
+    <div class="evidence-note warn"><span class="pill warn">Slightly positive — NOT proven</span> <span class="small">In testing, only this strict filter came out ahead after costs, over too few trades to rule out luck. <a href="#/final">See the evidence</a></span></div>`;
   if (d.best.length) {
     const [first, ...rest] = d.best;
     return `${head}${bestCard(first, 1)}${rest.length ? `<div class="grid cols-2" style="margin-top:16px">${rest.map((it, k) => bestCard(it, k + 2)).join('')}</div>` : ''}`;
@@ -299,7 +300,8 @@ function strongHtml(d) {
   const intra = d.strongBuyIntraday.length
     ? rowsHtml(d.strongBuyIntraday, 'intra')
     : '<div class="empty" style="padding:14px 8px">No stock is a <b>Strong Buy</b> on the 5-minute chart right now.</div>';
-  return `<div class="section-head"><h2>⭐ Strong Buy stocks</h2></div>
+  return `<div class="section-head"><h2>⭐ Strong Buy signals</h2><span class="small muted">How strong the chart looks — <b>not</b> a recommendation</span></div>
+    <div class="evidence-note bad"><span class="pill bear">Plain signals lost money or did no better than chance in testing</span> <span class="small">Use these lists to decide what to study.</span></div>
     <div class="grid cols-2">
       <div class="card"><h3>Daily chart <span class="small muted">— for swing trades (days to weeks)</span></h3>${daily}</div>
       <div class="card"><h3>Intraday, right now <span class="small muted">— for same-day trades</span></h3>${intra}</div>
@@ -421,9 +423,9 @@ function cardHtml(d, q) {
     plan = `<div class="plan-grid">
       <div class="plan-item entry"><div class="k">BUY ZONE</div><div class="v num">${P(p.entryLow)} – ${P(p.entryHigh)}</div></div>
       <div class="plan-item stop"><div class="k">STOP-LOSS</div><div class="v num">${P(p.stopLoss)}</div></div>
-      <div class="plan-item target"><div class="k">TARGET 1</div><div class="v num">${P(p.target1)}</div></div>
-      <div class="plan-item target"><div class="k">TARGET 2</div><div class="v num">${P(p.target2)}</div></div></div>
-      <div class="small muted">Risk : Reward <b>1 : ${p.riskReward.toFixed(1)}</b> · risk ${C.fmtNum(p.riskPct, 2)}% per share</div>`;
+      <div class="plan-item"><div class="k">EXIT</div><div class="v">By 3:15 PM</div></div>
+      <div class="plan-item target"><div class="k">OPTIONAL TARGET</div><div class="v num">${P(p.target1)}</div></div></div>
+      <div class="small muted">Wide stop, so buy fewer shares · risk ${C.fmtNum(p.riskPct, 2)}% per share</div>`;
   } else {
     plan = `<h3 class="${p.action === 'avoid' ? 'down' : ''}" style="${p.action === 'wait' ? 'color:var(--warn)' : ''}">${C.esc(p.headline)}</h3>`;
   }

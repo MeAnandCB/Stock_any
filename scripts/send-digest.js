@@ -23,7 +23,7 @@ for (const market of markets) {
   try {
     const r = await runDigest({ market, dry, force });
     if (dry) {
-      console.log(`----- ${market} (not sent) -----\n${r.messages.join('\n\n— next message —\n\n').replace(/<\/?(b|i|a)[^>]*>/g, '')}\n`);
+      console.log(`----- ${market} (not sent) -----\n${r.messages.join('\n\n— next message —\n\n').replace(/<\/?(b|i|a)[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')}\n`);
     } else if (r.sent) {
       console.log(`✔ ${market}: digest sent to Telegram (${r.messages.length} message${r.messages.length === 1 ? '' : 's'}; intraday: ${r.intraday.join(', ') || 'none'}; long-term: ${r.longTerm.join(', ') || 'none'})`);
     } else {

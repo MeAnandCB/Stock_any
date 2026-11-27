@@ -12,13 +12,15 @@ import { analyze, summarize, round } from './lib/analysis.js';
 import { analyzeIntraday, buildItem, evaluateBest, SCENARIOS } from './lib/intraday.js';
 import { runIntradayScan, intradayChart, minutesLeftIn, marketDirection } from './lib/scan.js';
 import { scoreHeadline, aggregate } from './lib/sentiment.js';
-import { getNews, newsNameFor } from './lib/news.js';
+import { getNews, newsKeywordsFor, newsQueryFor, filterRelevant, stockNews } from './lib/news.js';
 import { MARKETS } from './lib/universe.js';
 import { mapLimit, cleanSymbol, readBody } from './lib/util.js';
 import { normalizeCode, sanitizeItems, SyncError, MAX_TOTAL_BYTES } from './lib/sync-core.js';
 import { syncExchange } from './lib/sync.js';
 import { createLimiter } from './lib/ratelimit.js';
 import { runDigest } from './lib/digest-job.js';
+import { selectCandidates, applyNews, loadEvidence, evidenceSummary } from './lib/final.js';
+import { diagnoseDrop } from './lib/stockcheck.js';
 import { timingSafeEqual } from 'node:crypto';
 
 if (!process.env.NODE_TEST_CONTEXT) loadEnv(); // optional .env file (MONGODB_URI etc.); real env vars win. Skipped under `node --test` so tests can never touch your real database.
@@ -77,15 +79,15 @@ function requireSymbol(raw) {
 }
 
 // For Indian users typing "RELIANCE", try RELIANCE.NS then RELIANCE.BO.
-async function chartWithFallback(symbol, market) {
+async function chartWithFallback(symbol, market, range = '2y') {
   try {
-    return await getChart(symbol);
+    return await getChart(symbol, range);
   } catch (e) {
     const canSuffix = e.status === 404 && market === 'IN' && !symbol.includes('.') && !symbol.startsWith('^');
     if (!canSuffix) throw e;
     for (const suffix of ['.NS', '.BO']) {
       try {
-        return await getChart(symbol + suffix);
+        return await getChart(symbol + suffix, range);
       } catch (e2) {
         if (e2.status !== 404) throw e2;
       }
@@ -121,32 +123,6 @@ async function summaries(symbols) {
     else failed.push({ symbol: symbols[i], error: r.error?.message || 'Failed' });
   });
   return { items, failed };
-}
-
-// Words a headline must contain to count as news about this company,
-// e.g. TCS -> ["TCS", "Tata Consultancy"].
-function newsKeywordsFor(chart) {
-  const base = chart.symbol.replace(/^\^/, '').replace(/\.(NS|BO)$/i, '');
-  const words = newsNameFor(chart.name).split(' ').filter(Boolean);
-  const name = words.slice(0, words.length > 1 ? 2 : 1).join(' ');
-  // "RELIANCE" would also match Reliance Power etc., so require the fuller name.
-  const baseIsFirstWord = words.length > 1 && base.toLowerCase() === words[0].toLowerCase();
-  return [...new Set([baseIsFirstWord ? '' : base, name].filter((k) => k && k.length >= 2))];
-}
-
-function newsQueryFor(chart) {
-  const name = newsNameFor(chart.name) || chart.symbol;
-  if (chart.symbol.startsWith('^')) return name;
-  const base = chart.symbol.replace(/\.(NS|BO)$/i, '');
-  const word = chart.currency === 'INR' ? 'share' : 'stock';
-  return base.toLowerCase() === name.toLowerCase() ? `"${name}" ${word}` : `("${name}" OR ${base}) ${word}`;
-}
-
-function filterRelevant(items, keywords) {
-  if (!keywords.length) return items;
-  const res = keywords.map((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'));
-  const hits = items.filter((n) => res.some((r) => r.test(n.title)));
-  return hits.length >= 3 ? hits : items; // fall back if the filter is too strict
 }
 
 function withSentiment(news) {
@@ -302,6 +278,47 @@ const routes = {
     // Keep a history in MongoDB when it is configured. Never fails the request.
     await persistBoard(result);
     return result;
+  },
+
+  // Final picks for intraday, short term and long term: the scan + a news screen of every candidate +
+  // what testing says about each rule.
+  async '/api/final'(q) {
+    const market = marketOf(q);
+    const scan = await runIntradayScan(market);
+    await persistBoard(scan);
+    const candidates = selectCandidates(scan);
+    const wanted = new Map([...candidates.intraday, ...candidates.swing, ...candidates.long].map((it) => [it.symbol, it]));
+    const screens = await mapLimit([...wanted.values()], 4, (it) => stockNews(it, market));
+    const news = new Map([...wanted.keys()].map((symbol, i) => [symbol, screens[i].ok ? screens[i].value : null]));
+    const evidence = loadEvidence(market);
+    return {
+      market, updated: scan.updated, marketOpen: scan.marketOpen, minutesLeft: scan.minutesLeft, sessionDate: scan.sessionDate,
+      marketBias: scan.marketBias, scanned: scan.items.length, failed: scan.failed,
+      ...applyNews(candidates, news),
+      evidence: evidenceSummary(evidence),
+      evidenceInfo: evidence ? { generatedAt: evidence.generatedAt, caveats: evidence.caveats } : null,
+    };
+  },
+
+  // "My stock fell — what now?" for any symbol.
+  async '/api/stock-check'(q) {
+    const market = marketOf(q);
+    const chart = await chartWithFallback(requireSymbol(q.get('symbol')), market, '5y');
+    const itsMarket = /\.(NS|BO)$/i.test(chart.symbol) ? 'IN' : market;
+    const [index, news] = await Promise.all([
+      getChart(MARKETS[itsMarket].indices[0].symbol, '5y').then((c) => c.candles).catch(() => []),
+      stockNews(chart, itsMarket),
+    ]);
+    return {
+      quote: {
+        symbol: chart.symbol, name: chart.name, currency: chart.currency, price: chart.price, change: chart.change, changePct: chart.changePct,
+        marketState: chart.marketState, marketTime: chart.marketTime, stale: Boolean(chart.stale), repaired: Boolean(chart.repaired),
+      },
+      indexName: MARKETS[itsMarket].indices[0].name,
+      check: diagnoseDrop({ candles: chart.candles, index, news, marketState: chart.marketState }),
+      news,
+      spark: chart.candles.slice(-60).map((c) => c.close),
+    };
   },
 
   // The morning digest for Telegram. Called by the scheduler (Vercel Cron sends "Authorization: Bearer <CRON_SECRET>").

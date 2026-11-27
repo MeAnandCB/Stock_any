@@ -4,6 +4,7 @@ import { sma, rsi, macd, bollinger } from '/lib/indicators.js';
 import { viewAcademy } from './academy.js';
 import { initPaper, viewPaper, cleanupPaper, openOrder } from './paper.js';
 import { initIntraday, viewIntraday, loadIntradayCard } from './intraday.js';
+import { initFinal, viewFinal, viewCheck } from './final.js';
 
 // ---------- utilities ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -173,7 +174,7 @@ function newController() {
 }
 
 // ---------- router ----------
-const views = { dashboard: viewDashboard, analyze: viewAnalyze, picks: viewPicks, intraday: viewIntraday, watchlist: viewWatchlist, paper: viewPaper, news: viewNews, academy: viewAcademy, learn: viewLearn };
+const views = { dashboard: viewDashboard, final: viewFinal, check: viewCheck, analyze: viewAnalyze,picks: viewPicks, intraday: viewIntraday, watchlist: viewWatchlist, paper: viewPaper, news: viewNews, academy: viewAcademy, learn: viewLearn };
 
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/');
@@ -214,7 +215,7 @@ async function viewDashboard(_, alive) {
     </div>
     <div id="dIndices" class="grid cols-4">${[1, 2, 3, 4].map(() => `<div class="card">${skel(70)}</div>`).join('')}</div>
     <div class="grid split section">
-      <div class="card"><div class="section-head"><h3>Best setups right now</h3><a href="#/picks" class="small">All picks →</a></div><div id="dSetups">${skel(180)}</div></div>
+      <div class="card"><div class="section-head"><h3>Strongest daily signals <span class="small muted">(not proven buys)</span></h3><a href="#/final" class="small">🎯 Final picks →</a></div><div id="dSetups">${skel(180)}</div></div>
       <div class="card" id="dMood">${skel(180)}</div>
     </div>
     <div class="grid cols-2 section">
@@ -439,7 +440,8 @@ function renderAnalyze(data, alive) {
         <div id="hdrChange" class="num ${cls(q.changePct)}" style="font-weight:700">${fmtNum(q.change)} (${fmtPct(q.changePct)}) today</div>
         <div class="stock-actions">
           <button class="star ${inWatch ? 'on' : ''}" id="starBtn">${inWatch ? '★ In watchlist' : '☆ Add to watchlist'}</button>
-          ${q.symbol.startsWith('^') ? '' : `<button class="btn buy" id="ptBuy" title="Practise with virtual money — no real order is placed">Paper Buy</button><button class="btn sell" id="ptSell" title="Practise with virtual money — no real order is placed">Paper Sell</button>`}
+          ${q.symbol.startsWith('^') ? '' : `<a class="btn" href="#/check/${enc(q.symbol)}">🔎 Stock check</a>`}
+          ${q.symbol.startsWith('^') ? '' : `<button class="btn buy" id="ptBuy"title="Practise with virtual money — no real order is placed">Paper Buy</button><button class="btn sell" id="ptSell" title="Practise with virtual money — no real order is placed">Paper Sell</button>`}
         </div>
       </div>
     </div>
@@ -533,6 +535,7 @@ function planCard(a, q) {
     <div class="plan-grid">${items}</div>
     ${rr}
     <ul class="notes small">${p.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
+    ${p.action === 'buy' ? '<p class="small evidence-note bad" style="margin:10px 0 0">In a 4-year test, buying this daily signal did <b>no better than chance</b>. Use it as a reason to study the stock, not to buy it. <a href="#/final">See the evidence</a></p>' : ''}
   </div>`;
 }
 
@@ -1342,6 +1345,7 @@ function init() {
   initSearch();
   initSyncUi();
   initPaper({ api, esc, enc, isNum, cls, toast, store, state, view, newController, errorBox, loading, goAnalyze, verdictClass, popular: POPULAR });
+  initFinal({ api, esc, enc, isNum, cls, toast, store, state, view, newController, errorBox, loading, verdictPill, fmtPrice, fmtNum, fmtPct, marketLabel, safeUrl, timeAgo });
   initIntraday({ api, esc, enc, isNum, cls, state, view, newController, errorBox, loading, goAnalyze, verdictClass, verdictPill, fmtPrice, fmtNum, fmtPct, marketLabel });
   window.addEventListener('hashchange', route);
   route();
